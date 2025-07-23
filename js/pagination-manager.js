@@ -48,6 +48,7 @@ PaginationManager.prototype.loadPage = function(page, options) {
   }
 
   console.log('[PaginationManager] Loading page:', page, 'with options:', options);
+  console.log('[PaginationManager] FilterQuery being passed:', options.filterQuery);
   this.loading = true;
   var _this = this;
   

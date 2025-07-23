@@ -1632,6 +1632,7 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
       pageSize: pageSize,
       config: config,
       searchQuery: options.searchQuery,
+      filterQuery: options.filterQuery,
       filterQueries: options.filterQueries
     });
 
@@ -1859,19 +1860,19 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
         return;
       }
       
-      // Multiple values in column - AND logic within column
-      // Each value must match (contains all selected values)
-      var andConditions = [];
+      // Multiple values in column - OR logic within column
+      // Match ANY of the selected values (standard filter behavior)
+      var orConditions = [];
       values.forEach(function(value) {
         var valueCondition = {};
         valueCondition[fieldName] = {
           $eq: value
         };
-        andConditions.push(valueCondition);
+        orConditions.push(valueCondition);
       });
       
       columnConditions.push({
-        $and: andConditions
+        $or: orConditions
       });
     });
     
