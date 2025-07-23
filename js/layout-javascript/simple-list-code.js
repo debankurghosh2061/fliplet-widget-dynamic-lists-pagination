@@ -1207,14 +1207,19 @@ DynamicList.prototype.initializeWithLazyLoading = function() {
   
   console.log('[DynamicList] Initializing with lazy loading');
   
-  // Load first page
-  return _this.loadDataWithCurrentState({
-    initialRender: true
-  }).then(function() {
-    _this.parseFilterQueries();
-    _this.changeSort();
-    return _this.parseSearchQueries();
-  });
+  // Initialize filters first (server-side loading)
+  return _this.addFilters([])
+    .then(function() {
+      // Load first page
+      return _this.loadDataWithCurrentState({
+        initialRender: true
+      });
+    })
+    .then(function() {
+      _this.parseFilterQueries();
+      _this.changeSort();
+      return _this.parseSearchQueries();
+    });
 };
 
 DynamicList.prototype.initializeLegacyMode = function() {
@@ -2326,9 +2331,19 @@ DynamicList.prototype.addFilters = function(records) {
   // Function that renders the filters
   var _this = this;
   
+  console.log('[DynamicList] addFilters called with:', {
+    lazyLoadingEnabled: _this.lazyLoadingEnabled,
+    filterFields: _this.data.filterFields,
+    filterFieldsLength: _this.data.filterFields ? _this.data.filterFields.length : 0,
+    dataSourceId: _this.data.dataSourceId,
+    recordsLength: records ? records.length : 0
+  });
+  
   // If lazy loading is enabled, use server-side filter value loading
   if (_this.lazyLoadingEnabled && _this.data.filterFields && _this.data.filterFields.length) {
     console.log('[DynamicList] Loading filter values server-side');
+    console.log('[DynamicList] Filter fields configured:', _this.data.filterFields);
+    console.log('[DynamicList] Data source ID:', _this.data.dataSourceId);
     
     return _this.Utils.Records.loadFilterValues({
       fields: _this.data.filterFields,
