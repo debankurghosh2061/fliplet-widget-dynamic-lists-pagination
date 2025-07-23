@@ -1594,6 +1594,125 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
     });
   }
 
+  /**
+   * Load data with pagination support
+   * @param {Object} options - Configuration options
+   * @param {Number} options.page - Page number (0-based)
+   * @param {Number} options.pageSize - Number of records per page  
+   * @param {Boolean} options.append - Whether to append to existing data
+   * @param {Object} options.searchQuery - Search parameters
+   * @param {Object} options.filterQuery - Filter parameters
+   * @returns {Promise} Promise resolves with paginated data
+   */
+  function loadDataPaginated(options) {
+    options = options || {};
+    
+    var config = options.config;
+    var page = options.page || 0;
+    var pageSize = options.pageSize || config.lazyLoadPageSize || 50;
+    
+    console.log('[Utils] Loading paginated data - page:', page, 'pageSize:', pageSize);
+    
+    // For now, keep it simple and just use basic pagination without search/filter
+    // Search and filter will be added in Phase 2
+    var query = buildBasicPaginatedQuery({
+      page: page,
+      pageSize: pageSize,
+      config: config
+    });
+
+    var connectionOptions = {
+      offline: true
+    };
+
+    if (config.hasOwnProperty('cache')) {
+      connectionOptions.offline = config.cache;
+    }
+
+    return Fliplet.DataSources.connect(config.dataSourceId, connectionOptions)
+      .then(function(connection) {
+        return connection.find(query);
+      })
+      .then(function(result) {
+        // Handle both paginated and non-paginated responses
+        var records = result.data || result;
+        var pagination = result.pagination;
+        
+        if (!pagination) {
+          // If no pagination info, calculate it manually
+          var totalRecords = records.length;
+          var hasMore = totalRecords === pageSize; // Assume more if we got a full page
+          
+          pagination = {
+            total: totalRecords,
+            hasMore: hasMore,
+            page: page,
+            pageSize: pageSize
+          };
+        }
+        
+        console.log('[Utils] Paginated data loaded - records:', records.length, 'hasMore:', pagination.hasMore);
+        
+        return {
+          records: records,
+          pagination: pagination
+        };
+      })
+      .catch(function(error) {
+        console.error('[Utils] Error loading paginated data:', error);
+        throw error;
+      });
+  }
+
+  /**
+   * Build basic paginated query without search/filter (Phase 1 implementation)
+   * @param {Object} options - Query options
+   * @returns {Object} Query object for DataSource API
+   */
+  function buildBasicPaginatedQuery(options) {
+    var config = options.config;
+    var page = options.page;
+    var pageSize = options.pageSize;
+    
+    var query = {
+      limit: pageSize,
+      offset: page * pageSize
+    };
+
+    // Add default sorting to ensure consistent results
+    if (!config.sortOptions || !config.sortOptions.length) {
+      query.order = [
+        ['order', 'ASC'],
+        ['id', 'ASC']
+      ];
+    } else {
+      // Use configured sort options
+      var sortColumns = _.map(config.sortOptions, function(option) {
+        return 'data[' + option.column + ']';
+      });
+      var sortOrders = _.map(config.sortOptions, function(option) {
+        return option.orderBy === 'descending' ? 'desc' : 'asc';
+      });
+      query.order = _.zip(sortColumns, sortOrders);
+    }
+
+    // Add pre-filters if they exist (but no search/filter for Phase 1)
+    if (needsApiQueryData({ config: config })) {
+      var preFilterQuery = getQueryData({
+        config: config,
+        filterQueries: options.filterQueries
+      });
+      
+      if (preFilterQuery && preFilterQuery.where) {
+        query.where = preFilterQuery.where;
+      }
+    }
+    
+    console.log('[Utils] Built paginated query:', JSON.stringify(query, null, 2));
+    
+    return query;
+  }
+
   function runRecordFilters(records, filters) {
     if (!filters || _.isEmpty(filters)) {
       return records;
@@ -3377,6 +3496,7 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
     },
     Records: {
       loadData: loadData,
+      loadDataPaginated: loadDataPaginated,
       runFilters: runRecordFilters,
       runSearch: runRecordSearch,
       getFields: getRecordFields,

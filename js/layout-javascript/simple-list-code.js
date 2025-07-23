@@ -23,6 +23,11 @@ function DynamicList(id, data) {
   this.data.apiFiltersAvailable = true;
   this.$container = $('[data-dynamic-lists-id="' + id + '"]');
 
+  // Lazy loading configuration (Phase 1 - basic settings)
+  this.data.enableServerSideLazyLoading = this.data.enableServerSideLazyLoading !== false; // Default to true for testing
+  this.data.lazyLoadPageSize = this.data.lazyLoadPageSize || 50; // Default page size
+  this.data.legacyMode = this.data.legacyMode || false; // Force legacy mode if needed
+
   // Other variables
   // Global variables
   this.allowClick = true;
@@ -66,6 +71,11 @@ function DynamicList(id, data) {
    * this specifies the batch size to be used when rendering in chunks
    */
   this.INCREMENTAL_RENDERING_BATCH_SIZE = 100;
+
+  // Lazy loading properties
+  this.paginationManager = null;
+  this.lazyLoadObserver = null;
+  this.lazyLoadingEnabled = false;
 
   this.data.bookmarksEnabled = _.get(this, 'data.social.bookmark');
 
@@ -1104,6 +1114,25 @@ DynamicList.prototype.removeListItemHTML = function(options) {
   this.$container.find('.simple-list-item[data-entry-id="' + id + '"]').remove();
 };
 
+DynamicList.prototype.shouldEnableLazyLoading = function() {
+  // Check if server-side lazy loading is supported
+  return !!(
+    this.data.enableServerSideLazyLoading &&
+    this.data.dataSourceId &&
+    !this.data.legacyMode &&
+    !this.hasUnsupportedFeatures()
+  );
+};
+
+DynamicList.prototype.hasUnsupportedFeatures = function() {
+  // Features that require all data to be loaded upfront
+  return !!(
+    typeof this.data.getData === 'function' ||      // Custom data loading
+    typeof this.data.searchData === 'function' ||   // Custom search
+    !_.isEmpty(this.data.computedFields)             // Computed fields
+  );
+};
+
 DynamicList.prototype.initialize = function() {
   var _this = this;
   var shouldInitFromQuery = _this.parseQueryVars();
@@ -1115,6 +1144,10 @@ DynamicList.prototype.initialize = function() {
   }
 
   _this.attachObservers();
+
+  // Determine if lazy loading should be enabled
+  _this.lazyLoadingEnabled = _this.shouldEnableLazyLoading();
+  console.log('[DynamicList] Lazy loading enabled:', _this.lazyLoadingEnabled);
 
   // Check if there is a query or PV for search/filter queries
   return (shouldInitFromQuery ? Promise.resolve() : _this.parsePVQueryVars())
@@ -1129,15 +1162,44 @@ DynamicList.prototype.initialize = function() {
       });
     })
     .then(function() {
-      return _this.Utils.Records.loadData({
-        instance: _this,
-        config: _this.data,
-        id: _this.data.id,
-        uuid: _this.data.uuid,
-        $container: _this.$container,
-        filterQueries: _this.queryPreFilter ? _this.pvPreFilterQuery : undefined
-      });
-    })
+      if (_this.lazyLoadingEnabled) {
+        // Initialize pagination manager
+        _this.paginationManager = new PaginationManager(_this);
+        return _this.initializeWithLazyLoading();
+      } else {
+        return _this.initializeLegacyMode();
+      }
+    });
+};
+
+DynamicList.prototype.initializeWithLazyLoading = function() {
+  var _this = this;
+  
+  console.log('[DynamicList] Initializing with lazy loading');
+  
+  // Load first page
+  return _this.loadDataWithCurrentState({
+    initialRender: true
+  }).then(function() {
+    _this.parseFilterQueries();
+    _this.changeSort();
+    return _this.parseSearchQueries();
+  });
+};
+
+DynamicList.prototype.initializeLegacyMode = function() {
+  var _this = this;
+  
+  console.log('[DynamicList] Initializing with legacy mode');
+  
+  return _this.Utils.Records.loadData({
+    instance: _this,
+    config: _this.data,
+    id: _this.data.id,
+    uuid: _this.data.uuid,
+    $container: _this.$container,
+    filterQueries: _this.queryPreFilter ? _this.pvPreFilterQuery : undefined
+  })
     .then(function(records) {
       _this.Utils.Records.addComputedFields({
         records: records,
@@ -1209,6 +1271,94 @@ DynamicList.prototype.changeSort = function() {
     $('[data-sort-field="' + this.pvPreSortQuery.column + '"]')
       .attr('data-sort-order', this.pvPreSortQuery.order);
   }
+};
+
+/**
+ * Load data with current state (for lazy loading)
+ * @param {Object} options - Loading options
+ * @returns {Promise} Promise that resolves with loaded data
+ */
+DynamicList.prototype.loadDataWithCurrentState = function(options) {
+  options = options || {};
+  
+  var _this = this;
+  
+  // For Phase 1, we skip search and filter - just basic pagination
+  var queryOptions = {
+    append: options.append || false
+  };
+  
+  console.log('[DynamicList] Loading data with current state, append:', queryOptions.append);
+  
+  return _this.paginationManager.loadPage(_this.paginationManager.currentPage, queryOptions)
+    .then(function(result) {
+      if (!result.fromCache) {
+        return _this.updateUIWithResults(result.records, queryOptions);
+      }
+      
+      return result;
+    });
+};
+
+/**
+ * Update UI with loaded results
+ * @param {Array} records - Loaded records
+ * @param {Object} queryOptions - Query options used
+ * @returns {Promise} Promise that resolves when UI is updated
+ */
+DynamicList.prototype.updateUIWithResults = function(records, queryOptions) {
+  var _this = this;
+  
+  console.log('[DynamicList] Updating UI with', records.length, 'records, append:', queryOptions.append);
+  
+  // Process records for permissions
+  records = _this.getPermissions(records);
+  
+  // Add computed fields and prepare data (simplified for Phase 1)
+  _this.Utils.Records.addComputedFields({
+    records: records,
+    config: _this.data,
+    filterTypes: _this.filterTypes
+  });
+  
+  return _this.Utils.Records.updateFiles({
+    records: records,
+    config: _this.data
+  }).then(function(processedRecords) {
+    // Add summary data for rendering
+    var modifiedData = _this.addSummaryData(processedRecords);
+    
+    if (!queryOptions.append) {
+      // Clear existing results for initial load
+      $('#simple-list-wrapper-' + _this.data.id).empty();
+      _this.modifiedListItems = modifiedData;
+      _this.listItems = processedRecords;
+    } else {
+      // Append new results
+      _this.modifiedListItems = _this.modifiedListItems.concat(modifiedData);
+      _this.listItems = _this.listItems.concat(processedRecords);
+    }
+    
+    // Render the data
+    return _this.renderLoopSegment({
+      data: modifiedData,
+      append: queryOptions.append
+    });
+  }).then(function(renderedRecords) {
+    // Update UI state
+    _this.$container.find('.simple-list-container').removeClass('loading').addClass('ready');
+    _this.$container.find('.simple-list-container').toggleClass('no-results', !_this.modifiedListItems.length);
+    
+    // Setup lazy loading observer for new records
+    if (renderedRecords.length && _this.paginationManager.hasMore) {
+      _this.attachLazyLoadObserver({
+        renderedRecords: renderedRecords
+      });
+    }
+    
+    // Initialize social features
+    return _this.initializeSocials(renderedRecords);
+  });
 };
 
 DynamicList.prototype.checkIsToOpen = function() {
@@ -1445,6 +1595,7 @@ DynamicList.prototype.renderLoopSegment = function(options) {
 
   var _this = this;
   var data = options.data;
+  var append = options.append || false;
   var renderLoopIndex = 0;
   var template = this.data.advancedSettings && this.data.advancedSettings.loopHTML
     ? Handlebars.compile(this.data.advancedSettings.loopHTML)
@@ -1459,7 +1610,18 @@ DynamicList.prototype.renderLoopSegment = function(options) {
       );
 
       if (nextBatch.length) {
-        $('#simple-list-wrapper-' + _this.data.id).append(template(nextBatch));
+        var renderedHTML = template(nextBatch);
+        
+        if (append) {
+          $('#simple-list-wrapper-' + _this.data.id).append(renderedHTML);
+        } else {
+          if (renderLoopIndex === 0) {
+            $('#simple-list-wrapper-' + _this.data.id).html(renderedHTML);
+          } else {
+            $('#simple-list-wrapper-' + _this.data.id).append(renderedHTML);
+          }
+        }
+        
         renderLoopIndex++;
         // if the browser is ready, render
         requestAnimationFrame(render);
@@ -1476,6 +1638,12 @@ DynamicList.prototype.renderLoopSegment = function(options) {
 DynamicList.prototype.lazyLoadMore = function() {
   var _this = this;
 
+  // If lazy loading is enabled, use the new server-side pagination
+  if (_this.lazyLoadingEnabled && _this.paginationManager) {
+    return _this.loadNextPage();
+  }
+
+  // Legacy client-side lazy rendering
   if (!this.renderListItems.length) {
     this.$container.find('.list-load-more').addClass('hidden');
 
@@ -1532,32 +1700,154 @@ DynamicList.prototype.attachLazyLoadObserver = function(options) {
   var renderedRecords = options.renderedRecords || [];
 
   if (!renderedRecords.length || !('IntersectionObserver' in window)) {
+    console.log('[DynamicList] Cannot attach lazy load observer - no records or no IntersectionObserver support');
     return;
   }
 
   var _this = this;
 
+  // Calculate trigger point (load next page when 90% through current batch)
   var lazyLoadThresholdIndex = Math.floor(renderedRecords.length * 0.9);
   var triggerRecord = renderedRecords[lazyLoadThresholdIndex];
 
   if (!triggerRecord) {
+    console.log('[DynamicList] No trigger record found for lazy loading');
     return;
   }
 
   var $triggerEntry = _this.$container.find('.simple-list-item[data-entry-id="' + triggerRecord.id + '"]');
-  var observer = new IntersectionObserver(function(entries, observer) {
+  
+  if (!$triggerEntry.length) {
+    console.log('[DynamicList] Trigger element not found in DOM');
+    return;
+  }
+
+  // Disconnect previous observer if exists
+  if (_this.lazyLoadObserver) {
+    _this.lazyLoadObserver.disconnect();
+  }
+
+  console.log('[DynamicList] Attaching lazy load observer to record', triggerRecord.id);
+
+  _this.lazyLoadObserver = new IntersectionObserver(function(entries) {
     entries.forEach(function(entry) {
-      if (!entry.isIntersecting) {
+      if (!entry.isIntersecting || 
+          (_this.paginationManager && _this.paginationManager.loading) || 
+          (_this.paginationManager && !_this.paginationManager.hasMore)) {
         return;
       }
 
-      observer.disconnect();
-      _this.lazyLoadMore();
+      console.log('[DynamicList] Lazy load trigger activated');
+      _this.lazyLoadObserver.disconnect();
+      _this.loadNextPage();
     });
+  }, {
+    threshold: 0.1,
+    rootMargin: '100px' // Start loading 100px before the trigger point
   });
 
   requestAnimationFrame(function() {
-    observer.observe($triggerEntry.get(0));
+    _this.lazyLoadObserver.observe($triggerEntry.get(0));
+  });
+};
+
+/**
+ * Load the next page of data (enhanced for lazy loading)
+ * @returns {Promise} Promise that resolves when next page is loaded
+ */
+DynamicList.prototype.loadNextPage = function() {
+  var _this = this;
+  
+  if (!_this.paginationManager || !_this.paginationManager.hasMore || _this.paginationManager.loading) {
+    console.log('[DynamicList] Cannot load next page - no pagination manager or no more pages');
+    return Promise.resolve();
+  }
+  
+  console.log('[DynamicList] Loading next page');
+  
+  // Show loading indicator
+  _this.showLoadingIndicator();
+  
+  return _this.paginationManager.loadNextPage({})
+    .then(function(result) {
+      _this.hideLoadingIndicator();
+      
+      if (result.records.length) {
+        return _this.updateUIWithResults(result.records, { append: true });
+      }
+      
+      return [];
+    })
+    .catch(function(error) {
+      _this.hideLoadingIndicator();
+      _this.handleLoadError(error, { isInitialLoad: false });
+    });
+};
+
+/**
+ * Show loading indicator for lazy loading
+ */
+DynamicList.prototype.showLoadingIndicator = function() {
+  if (this.$container.find('.lazy-loading-indicator').length) {
+    return; // Already showing
+  }
+  
+  var loadingHTML = '<div class="lazy-loading-indicator" style="text-align:center;padding:20px;"><i class="fa fa-circle-o-notch fa-spin"></i> Loading more...</div>';
+  this.$container.find('.simple-list-wrapper').append(loadingHTML);
+};
+
+/**
+ * Hide loading indicator
+ */
+DynamicList.prototype.hideLoadingIndicator = function() {
+  this.$container.find('.lazy-loading-indicator').remove();
+};
+
+/**
+ * Handle loading errors
+ * @param {Error} error - The error that occurred
+ * @param {Object} options - Error handling options
+ */
+DynamicList.prototype.handleLoadError = function(error, options) {
+  console.error('[DynamicList] Lazy loading error:', error);
+  
+  // Track the error
+  Fliplet.Analytics.trackEvent({
+    category: 'list_dynamic_lazy_loading',
+    action: 'load_error',
+    label: error.message || 'Unknown error'
+  });
+  
+  // Show user-friendly error
+  if (options.isInitialLoad) {
+    Fliplet.UI.Toast.error(error, {
+      message: T('widgets.list.dynamic.errors.loadFailed')
+    });
+    // Fall back to legacy mode could be implemented here
+  } else {
+    // For pagination errors, show retry option
+    this.showRetryOption();
+  }
+};
+
+/**
+ * Show retry option for failed pagination
+ */
+DynamicList.prototype.showRetryOption = function() {
+  if (this.$container.find('.lazy-load-error').length) {
+    return; // Already showing
+  }
+  
+  var retryHTML = '<div class="lazy-load-error" style="text-align:center;padding:20px;border:1px solid #ddd;margin:10px;background:#f9f9f9;"><p>Failed to load more items</p><button class="btn btn-default retry-load">Retry</button></div>';
+  this.$container.find('.simple-list-wrapper').append(retryHTML);
+  
+  var _this = this;
+  this.$container.find('.retry-load').on('click', function() {
+    _this.$container.find('.lazy-load-error').remove();
+    if (_this.paginationManager) {
+      _this.paginationManager.hasMore = true;
+      _this.loadNextPage();
+    }
   });
 };
 

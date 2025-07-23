@@ -1,6 +1,6 @@
 {
   "name": "List (from data source)",
-  "package": "com.fliplet.dynamic-lists",
+  "package": "com.fliplet.dynamic-lists-pagination",
   "version": "1.4.0",
   "icon": "img/icon.png",
   "tags": ["type:component", "category:list"],
