@@ -1613,12 +1613,13 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
     
     console.log('[Utils] Loading paginated data - page:', page, 'pageSize:', pageSize);
     
-    // For now, keep it simple and just use basic pagination without search/filter
-    // Search and filter will be added in Phase 2
-    var query = buildBasicPaginatedQuery({
+    // Build query with search support
+    var query = buildPaginatedQuery({
       page: page,
       pageSize: pageSize,
-      config: config
+      config: config,
+      searchQuery: options.searchQuery,
+      filterQueries: options.filterQueries
     });
 
     var connectionOptions = {
@@ -1665,14 +1666,15 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
   }
 
   /**
-   * Build basic paginated query without search/filter (Phase 1 implementation)
+   * Build paginated query with search support (Phase 2 implementation)
    * @param {Object} options - Query options
    * @returns {Object} Query object for DataSource API
    */
-  function buildBasicPaginatedQuery(options) {
+  function buildPaginatedQuery(options) {
     var config = options.config;
     var page = options.page;
     var pageSize = options.pageSize;
+    var searchQuery = options.searchQuery;
     
     var query = {
       limit: pageSize,
@@ -1696,7 +1698,10 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
       query.order = _.zip(sortColumns, sortOrders);
     }
 
-    // Add pre-filters if they exist (but no search/filter for Phase 1)
+    // Build where clause combining pre-filters and search
+    var whereConditions = [];
+    
+    // Add pre-filters if they exist
     if (needsApiQueryData({ config: config })) {
       var preFilterQuery = getQueryData({
         config: config,
@@ -1704,13 +1709,89 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
       });
       
       if (preFilterQuery && preFilterQuery.where) {
-        query.where = preFilterQuery.where;
+        whereConditions.push(preFilterQuery.where);
       }
     }
     
-    console.log('[Utils] Built paginated query:', JSON.stringify(query, null, 2));
+    // Add search conditions
+    if (searchQuery && searchQuery.value && searchQuery.fields && searchQuery.fields.length) {
+      var searchCondition = buildSearchCondition(searchQuery);
+      if (searchCondition) {
+        whereConditions.push(searchCondition);
+      }
+    }
+    
+    // Combine conditions with $and if multiple exist
+    if (whereConditions.length === 1) {
+      query.where = whereConditions[0];
+    } else if (whereConditions.length > 1) {
+      query.where = {
+        $and: whereConditions
+      };
+    }
+    
+    console.log('[Utils] Built paginated query with search:', JSON.stringify(query, null, 2));
     
     return query;
+  }
+
+  /**
+   * Build search condition using $iLike for case-insensitive partial matching
+   * @param {Object} searchQuery - Search parameters
+   * @param {String} searchQuery.value - Search term
+   * @param {Array} searchQuery.fields - Field names to search in
+   * @returns {Object} Search condition object
+   */
+  function buildSearchCondition(searchQuery) {
+    var value = searchQuery.value;
+    var fields = searchQuery.fields;
+    
+    if (!value || !fields || !fields.length) {
+      return null;
+    }
+    
+    // Trim and validate search value
+    value = value.trim();
+    if (!value) {
+      return null;
+    }
+    
+    console.log('[Utils] Building search condition for value:', value, 'fields:', fields);
+    
+    // Single field - direct condition
+    if (fields.length === 1) {
+      var condition = {};
+      condition['data.' + fields[0]] = {
+        $iLike: value
+      };
+      return condition;
+    }
+    
+    // Multiple fields - use $or
+    var orConditions = [];
+    fields.forEach(function(field) {
+      var fieldCondition = {};
+      fieldCondition['data.' + field] = {
+        $iLike: value
+      };
+      orConditions.push(fieldCondition);
+    });
+    
+    return {
+      $or: orConditions
+    };
+  }
+
+  /**
+   * Build basic paginated query without search/filter (Phase 1 implementation)
+   * @param {Object} options - Query options
+   * @returns {Object} Query object for DataSource API
+   */
+  function buildBasicPaginatedQuery(options) {
+    // For backward compatibility, call the new function without search
+    return buildPaginatedQuery(_.assign({}, options, {
+      searchQuery: null
+    }));
   }
 
   function runRecordFilters(records, filters) {
@@ -3508,7 +3589,11 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
       prepareData: prepareRecordsData,
       addComputedFields: addRecordsComputedFields,
       getFilesInfo: getFilesInfo,
-      sortByField: sortRecordsByField
+      sortByField: sortRecordsByField,
+      
+      // Query building functions
+      buildPaginatedQuery: buildPaginatedQuery,
+      buildSearchCondition: buildSearchCondition
     },
     User: {
       isAdmin: userIsAdmin,

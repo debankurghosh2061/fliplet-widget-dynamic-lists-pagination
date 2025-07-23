@@ -25,7 +25,7 @@ function DynamicList(id, data) {
 
   // Lazy loading configuration (Phase 1 - basic settings)
   this.data.enableServerSideLazyLoading = this.data.enableServerSideLazyLoading !== false; // Default to true for testing
-  this.data.lazyLoadPageSize = this.data.lazyLoadPageSize || 50; // Default page size
+  this.data.lazyLoadPageSize = this.data.lazyLoadPageSize || 10; // Default page size
   this.data.legacyMode = this.data.legacyMode || false; // Force legacy mode if needed
 
   // Other variables
@@ -1288,12 +1288,21 @@ DynamicList.prototype.loadDataWithCurrentState = function(options) {
   
   var _this = this;
   
-  // For Phase 1, we skip search and filter - just basic pagination
+  // Get current search state
+  var searchQuery = null;
+  if (_this.isSearching && _this.searchValue && _this.data.searchFields) {
+    searchQuery = {
+      value: _this.searchValue,
+      fields: _this.data.searchFields
+    };
+  }
+  
   var queryOptions = {
-    append: options.append || false
+    append: options.append || false,
+    searchQuery: searchQuery
   };
   
-  console.log('[DynamicList] Loading data with current state, append:', queryOptions.append);
+  console.log('[DynamicList] Loading data with current state, append:', queryOptions.append, 'search:', !!searchQuery);
   
   return _this.paginationManager.loadPage(_this.paginationManager.currentPage, queryOptions)
     .then(function(result) {
@@ -2094,6 +2103,24 @@ if (typeof window !== 'undefined') {
      console.error('[DEBUG] No DynamicList instance found');
      return false;
    };
+   
+   window.testSearch = function(searchTerm) {
+     var containers = $('[data-dynamic-lists-id]');
+     if (containers.length > 0) {
+       var id = containers.first().data('dynamic-lists-id');
+       if (window['DynamicList_' + id]) {
+         var instance = window['DynamicList_' + id];
+         console.log('[DEBUG] Testing search with term:', searchTerm);
+         return instance.searchData({ value: searchTerm || 'test' }).then(function(result) {
+           console.log('[DEBUG] Search completed:', result);
+         }).catch(function(error) {
+           console.error('[DEBUG] Search error:', error);
+         });
+       }
+     }
+     console.error('[DEBUG] No DynamicList instance found');
+     return false;
+   };
 }
 
 /**
@@ -2297,12 +2324,68 @@ DynamicList.prototype.searchData = function(options) {
   var value = _.isUndefined(options.value) ? _this.searchValue : ('' + options.value).trim();
   var fields = options.fields || _this.data.searchFields;
   var openSingleEntry = options.openSingleEntry;
+  var resetPagination = options.resetPagination !== false;
   var $inputField = _this.$container.find('.search-holder input');
 
+  // Update search state
+  var previousSearchValue = _this.searchValue;
   _this.searchValue = value;
+  _this.isSearching = value !== '';
+  
+  console.log('[DynamicList] Search initiated - value:', value, 'fields:', fields, 'resetPagination:', resetPagination);
+
+  // If lazy loading is enabled, use server-side search
+  if (_this.lazyLoadingEnabled && _this.paginationManager) {
+    // Reset pagination for new search
+    if (resetPagination && value !== previousSearchValue) {
+      _this.paginationManager.reset();
+      _this.paginationManager.invalidateCache();
+    }
+    
+    // Update UI state immediately
+    _this.$container.find('.simple-list-container').toggleClass('searching', _this.isSearching);
+    _this.$container.find('.current-query').text(value);
+    
+    return _this.loadDataWithCurrentState({
+      append: !resetPagination,
+      initialRender: options.initialRender
+    }).then(function(result) {
+      // Handle single entry opening
+      if (openSingleEntry && result.records && result.records.length === 1) {
+        _this.showDetails(result.records[0].id);
+      }
+      
+      // Update search UI state
+      $inputField.val('');
+      $inputField.blur();
+      _this.$container.find('.simple-list-container').removeClass('searching');
+      _this.$container.find('.hidden-search-controls')[value.length ? 'addClass' : 'removeClass']('search-results');
+      _this.calculateSearchHeight(_this.$container.find('.simple-list-container'), !value.length);
+      _this.$container.find('.hidden-search-controls').addClass('active');
+      _this.$container.find('.hidden-search-controls')[result.records.length ? 'removeClass' : 'addClass']('no-results');
+
+      return Fliplet.Hooks.run('flListDataAfterRenderList', {
+        instance: _this,
+        value: value,
+        records: result.records || [],
+        renderedRecords: result.records || [],
+        config: _this.data,
+        sortField: _this.sortField,
+        sortOrder: _this.sortOrder,
+        activeFilters: _this.activeFilters || {},
+        showBookmarks: _this.showBookmarks || false,
+        id: _this.data.id,
+        uuid: _this.data.uuid,
+        container: _this.$container,
+        initialRender: !!options.initialRender
+      });
+    });
+  }
+
+  // Legacy client-side search fallback
+  console.log('[DynamicList] Using legacy client-side search');
   value = value.toLowerCase();
   _this.activeFilters = _this.Utils.Page.getActiveFilters({ $container: _this.$container });
-  _this.isSearching = value !== '';
   _this.isFiltering = !_.isEmpty(_this.activeFilters);
   _this.showBookmarks = _this.$container.find('.toggle-bookmarks').hasClass('mixitup-control-active');
 
