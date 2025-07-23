@@ -99,6 +99,11 @@ function DynamicList(id, data) {
     // Start running the Public functions
     _this.initialize();
   });
+  
+  // Store instance globally for debugging
+  if (typeof window !== 'undefined') {
+    window['DynamicList_' + id] = this;
+  }
 }
 
 DynamicList.prototype.Utils = Fliplet.Registry.get('dynamicListUtils');
@@ -1351,9 +1356,14 @@ DynamicList.prototype.updateUIWithResults = function(records, queryOptions) {
     
     // Setup lazy loading observer for new records
     if (renderedRecords.length && _this.paginationManager.hasMore) {
+      console.log('[DynamicList] Setting up lazy load observer for', renderedRecords.length, 'rendered records');
+      console.log('[DynamicList] Rendered record IDs:', renderedRecords.map(function(r) { return r.id; }));
+      
       _this.attachLazyLoadObserver({
         renderedRecords: renderedRecords
       });
+    } else {
+      console.log('[DynamicList] NOT setting up lazy load observer. Records:', renderedRecords.length, 'hasMore:', _this.paginationManager.hasMore);
     }
     
     // Initialize social features
@@ -1717,6 +1727,10 @@ DynamicList.prototype.attachLazyLoadObserver = function(options) {
 
   var $triggerEntry = _this.$container.find('.simple-list-item[data-entry-id="' + triggerRecord.id + '"]');
   
+  console.log('[DynamicList] Looking for trigger element with selector:', '.simple-list-item[data-entry-id="' + triggerRecord.id + '"]');
+  console.log('[DynamicList] Container has', _this.$container.find('.simple-list-item').length, 'total list items');
+  console.log('[DynamicList] All list item IDs:', _this.$container.find('.simple-list-item').map(function() { return $(this).data('entry-id'); }).get());
+  
   if (!$triggerEntry.length) {
     console.log('[DynamicList] Trigger element not found in DOM');
     return;
@@ -1728,12 +1742,39 @@ DynamicList.prototype.attachLazyLoadObserver = function(options) {
   }
 
   console.log('[DynamicList] Attaching lazy load observer to record', triggerRecord.id);
+  console.log('[DynamicList] Trigger element found:', $triggerEntry.length > 0);
+  console.log('[DynamicList] Current pagination state - hasMore:', _this.paginationManager.hasMore, 'loading:', _this.paginationManager.loading);
 
   _this.lazyLoadObserver = new IntersectionObserver(function(entries) {
+    console.log('[DynamicList] IntersectionObserver callback fired with', entries.length, 'entries');
+    
     entries.forEach(function(entry) {
-      if (!entry.isIntersecting || 
-          (_this.paginationManager && _this.paginationManager.loading) || 
-          (_this.paginationManager && !_this.paginationManager.hasMore)) {
+      console.log('[DynamicList] Entry details:', {
+        isIntersecting: entry.isIntersecting,
+        intersectionRatio: entry.intersectionRatio,
+        boundingClientRect: entry.boundingClientRect,
+        rootBounds: entry.rootBounds
+      });
+      
+      console.log('[DynamicList] Condition checks:', {
+        isIntersecting: entry.isIntersecting,
+        paginationManagerExists: !!_this.paginationManager,
+        loading: _this.paginationManager ? _this.paginationManager.loading : 'N/A',
+        hasMore: _this.paginationManager ? _this.paginationManager.hasMore : 'N/A'
+      });
+
+      if (!entry.isIntersecting) {
+        console.log('[DynamicList] Entry not intersecting, skipping');
+        return;
+      }
+      
+      if (_this.paginationManager && _this.paginationManager.loading) {
+        console.log('[DynamicList] PaginationManager is loading, skipping');
+        return;
+      }
+      
+      if (_this.paginationManager && !_this.paginationManager.hasMore) {
+        console.log('[DynamicList] PaginationManager has no more data, skipping');
         return;
       }
 
@@ -1747,7 +1788,23 @@ DynamicList.prototype.attachLazyLoadObserver = function(options) {
   });
 
   requestAnimationFrame(function() {
+    console.log('[DynamicList] Starting observation of trigger element');
     _this.lazyLoadObserver.observe($triggerEntry.get(0));
+    
+    // Add a manual check to see if the element is already in view
+    setTimeout(function() {
+      var rect = $triggerEntry.get(0).getBoundingClientRect();
+      var viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      var isInViewport = rect.top >= 0 && rect.top <= viewportHeight;
+      
+      console.log('[DynamicList] Manual viewport check after 1s:', {
+        elementTop: rect.top,
+        elementBottom: rect.bottom,
+        viewportHeight: viewportHeight,
+        isInViewport: isInViewport,
+        elementVisible: rect.height > 0 && rect.width > 0
+      });
+    }, 1000);
   });
 };
 
@@ -1802,6 +1859,52 @@ DynamicList.prototype.showLoadingIndicator = function() {
 DynamicList.prototype.hideLoadingIndicator = function() {
   this.$container.find('.lazy-loading-indicator').remove();
 };
+
+/**
+ * Debug function to manually test lazy loading
+ * Call this in browser console: window.testLazyLoading()
+ */
+DynamicList.prototype.debugLazyLoading = function() {
+  var _this = this;
+  
+  console.log('[DEBUG] Current lazy loading state:');
+  console.log('  - lazyLoadingEnabled:', _this.lazyLoadingEnabled);
+  console.log('  - paginationManager exists:', !!_this.paginationManager);
+  
+  if (_this.paginationManager) {
+    console.log('  - currentPage:', _this.paginationManager.currentPage);
+    console.log('  - hasMore:', _this.paginationManager.hasMore);
+    console.log('  - loading:', _this.paginationManager.loading);
+    console.log('  - totalCount:', _this.paginationManager.totalCount);
+  }
+  
+  console.log('  - lazyLoadObserver exists:', !!_this.lazyLoadObserver);
+  console.log('  - Current list items:', _this.listItems ? _this.listItems.length : 0);
+  console.log('  - Modified list items:', _this.modifiedListItems ? _this.modifiedListItems.length : 0);
+  
+  // Test manual load
+  console.log('[DEBUG] Attempting manual next page load...');
+  return _this.loadNextPage().then(function(result) {
+    console.log('[DEBUG] Manual load result:', result);
+  }).catch(function(error) {
+    console.error('[DEBUG] Manual load error:', error);
+  });
+};
+
+// Global function for easy testing
+if (typeof window !== 'undefined') {
+  window.testLazyLoading = function() {
+    // Find the first DynamicList instance
+    var containers = $('[data-dynamic-lists-id]');
+    if (containers.length > 0) {
+      var id = containers.first().data('dynamic-lists-id');
+      if (window['DynamicList_' + id]) {
+        return window['DynamicList_' + id].debugLazyLoading();
+      }
+    }
+    console.error('[DEBUG] No DynamicList instance found');
+  };
+}
 
 /**
  * Handle loading errors
