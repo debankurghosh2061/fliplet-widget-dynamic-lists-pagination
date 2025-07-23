@@ -2511,8 +2511,12 @@ DynamicList.prototype.searchData = function(options) {
       append: !resetPagination,
       initialRender: options.initialRender
     }).then(function(result) {
+      // Ensure result has proper structure
+      result = result || {};
+      result.records = result.records || [];
+      
       // Handle single entry opening
-      if (openSingleEntry && result.records && result.records.length === 1) {
+      if (openSingleEntry && result.records.length === 1) {
         _this.showDetails(result.records[0].id);
       }
       
@@ -2528,8 +2532,8 @@ DynamicList.prototype.searchData = function(options) {
       return Fliplet.Hooks.run('flListDataAfterRenderList', {
         instance: _this,
         value: value,
-        records: result.records || [],
-        renderedRecords: result.records || [],
+        records: result.records,
+        renderedRecords: result.records,
         config: _this.data,
         sortField: _this.sortField,
         sortOrder: _this.sortOrder,
