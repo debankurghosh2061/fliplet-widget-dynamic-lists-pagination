@@ -1791,21 +1791,190 @@ DynamicList.prototype.attachLazyLoadObserver = function(options) {
     console.log('[DynamicList] Starting observation of trigger element');
     _this.lazyLoadObserver.observe($triggerEntry.get(0));
     
-    // Add a manual check to see if the element is already in view
-    setTimeout(function() {
-      var rect = $triggerEntry.get(0).getBoundingClientRect();
-      var viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-      var isInViewport = rect.top >= 0 && rect.top <= viewportHeight;
-      
-      console.log('[DynamicList] Manual viewport check after 1s:', {
-        elementTop: rect.top,
-        elementBottom: rect.bottom,
-        viewportHeight: viewportHeight,
-        isInViewport: isInViewport,
-        elementVisible: rect.height > 0 && rect.width > 0
-      });
-    }, 1000);
+         // Add a manual check to see if the element is already in view
+     setTimeout(function() {
+       var element = $triggerEntry.get(0);
+       var rect = element.getBoundingClientRect();
+       var viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+       var isInViewport = rect.top >= 0 && rect.top <= viewportHeight;
+       var computedStyle = window.getComputedStyle(element);
+       
+       console.log('[DynamicList] Manual viewport check after 1s:', {
+         elementTop: rect.top,
+         elementBottom: rect.bottom,
+         elementWidth: rect.width,
+         elementHeight: rect.height,
+         viewportHeight: viewportHeight,
+         isInViewport: isInViewport,
+         elementVisible: rect.height > 0 && rect.width > 0,
+         display: computedStyle.display,
+         visibility: computedStyle.visibility,
+         opacity: computedStyle.opacity,
+         position: computedStyle.position
+       });
+       
+       // If the trigger element has no dimensions, try to find a better one
+       if (rect.height === 0 || rect.width === 0) {
+         console.log('[DynamicList] Trigger element has zero dimensions, trying to find a better trigger');
+         _this.setupBetterTriggerElement(renderedRecords);
+       }
+     }, 1000);
   });
+};
+
+/**
+ * Setup a better trigger element when the calculated one has zero dimensions
+ * @param {Array} renderedRecords - The rendered records to find a good trigger from
+ */
+DynamicList.prototype.setupBetterTriggerElement = function(renderedRecords) {
+  var _this = this;
+  
+  console.log('[DynamicList] Looking for alternative trigger element');
+  
+  // Try to find visible elements, starting from a different threshold
+  var alternatives = [0.8, 0.7, 0.6, 0.5]; // Try 80%, 70%, 60%, 50% through the list
+  var foundGoodTrigger = false;
+  
+  for (var i = 0; i < alternatives.length; i++) {
+    var thresholdIndex = Math.floor(renderedRecords.length * alternatives[i]);
+    var candidateRecord = renderedRecords[thresholdIndex];
+    
+    if (!candidateRecord) continue;
+    
+    var $candidateElement = _this.$container.find('.simple-list-item[data-entry-id="' + candidateRecord.id + '"]');
+    
+    if ($candidateElement.length) {
+      var rect = $candidateElement.get(0).getBoundingClientRect();
+      
+      console.log('[DynamicList] Checking alternative trigger at', Math.round(alternatives[i] * 100) + '%:', {
+        recordId: candidateRecord.id,
+        width: rect.width,
+        height: rect.height,
+        isVisible: rect.height > 0 && rect.width > 0
+      });
+      
+      if (rect.height > 0 && rect.width > 0) {
+        console.log('[DynamicList] Found good alternative trigger element:', candidateRecord.id);
+        
+        // Disconnect existing observer
+        if (_this.lazyLoadObserver) {
+          _this.lazyLoadObserver.disconnect();
+        }
+        
+        // Create new observer for this element
+        _this.lazyLoadObserver = new IntersectionObserver(function(entries) {
+          entries.forEach(function(entry) {
+            if (!entry.isIntersecting || 
+                (_this.paginationManager && _this.paginationManager.loading) || 
+                (_this.paginationManager && !_this.paginationManager.hasMore)) {
+              return;
+            }
+            
+            console.log('[DynamicList] Alternative trigger activated');
+            _this.lazyLoadObserver.disconnect();
+            _this.loadNextPage();
+          });
+        }, {
+          threshold: 0.1,
+          rootMargin: '100px'
+        });
+        
+        _this.lazyLoadObserver.observe($candidateElement.get(0));
+        foundGoodTrigger = true;
+        break;
+      }
+    }
+  }
+  
+  // If no individual element works, try observing the last visible element
+  if (!foundGoodTrigger) {
+    console.log('[DynamicList] No good individual trigger found, trying last visible element');
+    
+    var $allItems = _this.$container.find('.simple-list-item');
+    var $lastVisibleItem = null;
+    
+    $allItems.each(function() {
+      var rect = this.getBoundingClientRect();
+      if (rect.height > 0 && rect.width > 0) {
+        $lastVisibleItem = $(this);
+      }
+    });
+    
+    if ($lastVisibleItem) {
+      console.log('[DynamicList] Using last visible element as trigger:', $lastVisibleItem.data('entry-id'));
+      
+      if (_this.lazyLoadObserver) {
+        _this.lazyLoadObserver.disconnect();
+      }
+      
+      _this.lazyLoadObserver = new IntersectionObserver(function(entries) {
+        entries.forEach(function(entry) {
+          if (!entry.isIntersecting || 
+              (_this.paginationManager && _this.paginationManager.loading) || 
+              (_this.paginationManager && !_this.paginationManager.hasMore)) {
+            return;
+          }
+          
+          console.log('[DynamicList] Last visible element trigger activated');
+          _this.lazyLoadObserver.disconnect();
+          _this.loadNextPage();
+        });
+      }, {
+        threshold: 0.1,
+        rootMargin: '50px' // Smaller margin for last element
+      });
+      
+      _this.lazyLoadObserver.observe($lastVisibleItem.get(0));
+         } else {
+       console.warn('[DynamicList] Could not find any visible elements for lazy loading trigger');
+       console.log('[DynamicList] Setting up scroll-based fallback');
+       _this.setupScrollBasedTrigger();
+     }
+   }
+};
+
+/**
+ * Setup scroll-based lazy loading as a fallback when IntersectionObserver fails
+ */
+DynamicList.prototype.setupScrollBasedTrigger = function() {
+  var _this = this;
+  
+  if (_this.scrollHandler) {
+    $(window).off('scroll', _this.scrollHandler);
+  }
+  
+  _this.scrollHandler = _.throttle(function() {
+    if (_this.paginationManager && _this.paginationManager.loading) {
+      return;
+    }
+    
+    if (_this.paginationManager && !_this.paginationManager.hasMore) {
+      $(window).off('scroll', _this.scrollHandler);
+      return;
+    }
+    
+    var $listWrapper = _this.$container.find('.simple-list-wrapper');
+    if (!$listWrapper.length) return;
+    
+    var wrapperBottom = $listWrapper.offset().top + $listWrapper.outerHeight();
+    var viewportBottom = $(window).scrollTop() + $(window).height();
+    var distanceFromBottom = wrapperBottom - viewportBottom;
+    
+    // Trigger when within 200px of the bottom
+    if (distanceFromBottom < 200) {
+      console.log('[DynamicList] Scroll-based trigger activated');
+      $(window).off('scroll', _this.scrollHandler);
+      _this.loadNextPage().then(function() {
+        // Re-attach scroll handler after loading
+        setTimeout(function() {
+          $(window).on('scroll', _this.scrollHandler);
+        }, 100);
+      });
+    }
+  }, 250);
+  
+  $(window).on('scroll', _this.scrollHandler);
+  console.log('[DynamicList] Scroll-based fallback trigger activated');
 };
 
 /**
@@ -1882,13 +2051,18 @@ DynamicList.prototype.debugLazyLoading = function() {
   console.log('  - Current list items:', _this.listItems ? _this.listItems.length : 0);
   console.log('  - Modified list items:', _this.modifiedListItems ? _this.modifiedListItems.length : 0);
   
-  // Test manual load
-  console.log('[DEBUG] Attempting manual next page load...');
-  return _this.loadNextPage().then(function(result) {
-    console.log('[DEBUG] Manual load result:', result);
-  }).catch(function(error) {
-    console.error('[DEBUG] Manual load error:', error);
-  });
+     // Test manual load
+   console.log('[DEBUG] Attempting manual next page load...');
+   return _this.loadNextPage().then(function(result) {
+     console.log('[DEBUG] Manual load result:', result);
+     
+     // If no new records loaded and we have a scroll handler, suggest trying scroll
+     if ((!result || !result.length) && _this.scrollHandler) {
+       console.log('[DEBUG] No new records loaded. Try scrolling down to test scroll-based trigger.');
+     }
+   }).catch(function(error) {
+     console.error('[DEBUG] Manual load error:', error);
+   });
 };
 
 // Global function for easy testing
@@ -1901,9 +2075,25 @@ if (typeof window !== 'undefined') {
       if (window['DynamicList_' + id]) {
         return window['DynamicList_' + id].debugLazyLoading();
       }
-    }
-    console.error('[DEBUG] No DynamicList instance found');
-  };
+         }
+     console.error('[DEBUG] No DynamicList instance found');
+   };
+   
+   window.testScrollTrigger = function() {
+     var containers = $('[data-dynamic-lists-id]');
+     if (containers.length > 0) {
+       var id = containers.first().data('dynamic-lists-id');
+       if (window['DynamicList_' + id]) {
+         var instance = window['DynamicList_' + id];
+         console.log('[DEBUG] Setting up scroll-based trigger manually...');
+         instance.setupScrollBasedTrigger();
+         console.log('[DEBUG] Scroll trigger setup complete. Try scrolling down to test.');
+         return true;
+       }
+     }
+     console.error('[DEBUG] No DynamicList instance found');
+     return false;
+   };
 }
 
 /**
