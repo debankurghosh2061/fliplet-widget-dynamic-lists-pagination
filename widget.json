@@ -1,5 +1,5 @@
 {
-  "name": "List (from data source)",
+  "name": "List (from data source)-pagination",
   "package": "com.fliplet.dynamic-lists-pagination",
   "version": "1.4.0",
   "icon": "img/icon.png",
