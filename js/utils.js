@@ -665,7 +665,17 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
     options = options || {};
 
     var $container = options.$container;
-    var activeFilters = _($container.find('[data-filter-group] .hidden-filter-controls-filter.mixitup-control-active').not('[data-type="date"], [data-type="number"]'))
+    
+    // Debug: Log what elements we're looking for
+    var allFilterElements = $container.find('[data-filter-group] .hidden-filter-controls-filter');
+    var activeFilterElements = $container.find('[data-filter-group] .hidden-filter-controls-filter.mixitup-control-active');
+    var nonRangeActiveElements = $container.find('[data-filter-group] .hidden-filter-controls-filter.mixitup-control-active').not('[data-type="date"], [data-type="number"]');
+    
+    console.log('[Utils] getActiveFilters - all filter elements:', allFilterElements.length);
+    console.log('[Utils] getActiveFilters - active filter elements:', activeFilterElements.length);
+    console.log('[Utils] getActiveFilters - non-range active elements:', nonRangeActiveElements.length);
+    
+    var activeFilters = _(nonRangeActiveElements)
       .map(function(el) {
         return _.pickBy({
           class: el.dataset.toggle,
@@ -721,6 +731,9 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
 
     _.assign(activeFilters, rangeFilters);
 
+    console.log('[Utils] getActiveFilters - final result:', activeFilters);
+    console.log('[Utils] getActiveFilters - result is empty:', _.isEmpty(activeFilters));
+    
     return activeFilters;
   }
 
@@ -1676,6 +1689,14 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
     var pageSize = options.pageSize;
     var searchQuery = options.searchQuery;
     
+    console.log('[Utils] buildPaginatedQuery called with options:', {
+      page: page,
+      pageSize: pageSize,
+      hasSearchQuery: !!searchQuery,
+      hasFilterQuery: !!options.filterQuery,
+      filterQuery: options.filterQuery
+    });
+    
     var query = {
       limit: pageSize,
       offset: page * pageSize
@@ -1723,10 +1744,17 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
     
     // Add filter conditions
     if (options.filterQuery && !_.isEmpty(options.filterQuery)) {
+      console.log('[Utils] Processing filter query:', options.filterQuery);
       var filterCondition = buildFilterCondition(options.filterQuery);
+      console.log('[Utils] Built filter condition:', filterCondition);
       if (filterCondition) {
         whereConditions.push(filterCondition);
+        console.log('[Utils] Added filter condition to whereConditions');
+      } else {
+        console.log('[Utils] Filter condition was null, not adding to whereConditions');
       }
+    } else {
+      console.log('[Utils] No filter query provided or empty:', options.filterQuery);
     }
     
     // Combine conditions with $and if multiple exist
@@ -1738,7 +1766,8 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
       };
     }
     
-    console.log('[Utils] Built paginated query with search:', JSON.stringify(query, null, 2));
+    console.log('[Utils] Final query built with whereConditions.length:', whereConditions.length);
+    console.log('[Utils] Built final paginated query:', JSON.stringify(query, null, 2));
     
     return query;
   }
@@ -1800,11 +1829,15 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
   function buildFilterCondition(filterQuery) {
     var filters = filterQuery.filters || filterQuery;
     
+    console.log('[Utils] buildFilterCondition called with filterQuery:', filterQuery);
+    console.log('[Utils] Extracted filters:', filters);
+    
     if (!filters || _.isEmpty(filters)) {
+      console.log('[Utils] buildFilterCondition returning null - no filters or empty');
       return null;
     }
     
-    console.log('[Utils] Building filter condition:', filters);
+    console.log('[Utils] Building filter condition for filters:', filters);
     
     var columnConditions = [];
     

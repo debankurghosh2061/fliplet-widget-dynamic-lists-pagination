@@ -158,6 +158,22 @@ DynamicList.prototype.handleFilterChange = function() {
   var activeFilters = _this.Utils.Page.getActiveFilters({ $container: _this.$container });
   _this.isFiltering = !_.isEmpty(activeFilters);
   
+  // Debug: Log the active filters that were detected
+  console.log('[DynamicList] Active filters detected:', activeFilters);
+  console.log('[DynamicList] Filter DOM elements found:', _this.$container.find('[data-filter-group] .hidden-filter-controls-filter.mixitup-control-active').length);
+  
+  // Also log what filter elements exist in the DOM
+  _this.$container.find('[data-filter-group] .hidden-filter-controls-filter.mixitup-control-active').each(function() {
+    var $el = $(this);
+    console.log('[DynamicList] Active filter element:', {
+      field: $el.data('field'),
+      value: $el.data('value'),
+      type: $el.data('type'),
+      toggle: $el.data('toggle'),
+      element: $el[0]
+    });
+  });
+  
   // Trigger search/filter with reset pagination
   return _this.searchData({
     resetPagination: true
@@ -1331,10 +1347,15 @@ DynamicList.prototype.loadDataWithCurrentState = function(options) {
   var filterQuery = null;
   if (_this.lazyLoadingEnabled) {
     var activeFilters = _this.Utils.Page.getActiveFilters({ $container: _this.$container });
+    console.log('[DynamicList] loadDataWithCurrentState - activeFilters:', activeFilters);
+    
     if (activeFilters && !_.isEmpty(activeFilters)) {
       filterQuery = {
         filters: activeFilters
       };
+      console.log('[DynamicList] loadDataWithCurrentState - filterQuery created:', filterQuery);
+    } else {
+      console.log('[DynamicList] loadDataWithCurrentState - No active filters found or empty');
     }
   }
   
@@ -2194,6 +2215,116 @@ if (typeof window !== 'undefined') {
            console.log('[DEBUG] Search completed:', result);
          }).catch(function(error) {
            console.error('[DEBUG] Search error:', error);
+         });
+       }
+     }
+     console.error('[DEBUG] No DynamicList instance found');
+     return false;
+   };
+   
+   window.debugFilterFlow = function() {
+     var containers = $('[data-dynamic-lists-id]');
+     if (containers.length > 0) {
+       var id = containers.first().data('dynamic-lists-id');
+       if (window['DynamicList_' + id]) {
+         var instance = window['DynamicList_' + id];
+         
+         console.log('[DEBUG] === FILTER FLOW DEBUG ===');
+         console.log('[DEBUG] Instance:', instance);
+         console.log('[DEBUG] Lazy loading enabled:', instance.lazyLoadingEnabled);
+         console.log('[DEBUG] Pagination manager:', !!instance.paginationManager);
+         console.log('[DEBUG] Container:', instance.$container);
+         
+         // Check filter elements in DOM
+         var allFilterElements = instance.$container.find('[data-filter-group]');
+         console.log('[DEBUG] Filter groups found:', allFilterElements.length);
+         
+         allFilterElements.each(function(index) {
+           var $group = $(this);
+           console.log('[DEBUG] Filter group', index, ':', {
+             fieldName: $group.data('field'),
+             type: $group.data('type'),
+             elements: $group.find('.hidden-filter-controls-filter').length,
+             activeElements: $group.find('.hidden-filter-controls-filter.mixitup-control-active').length
+           });
+           
+           $group.find('.hidden-filter-controls-filter').each(function() {
+             var $filter = $(this);
+             console.log('[DEBUG]   Filter element:', {
+               field: $filter.data('field'),
+               value: $filter.data('value'),
+               type: $filter.data('type'),
+               toggle: $filter.data('toggle'),
+               isActive: $filter.hasClass('mixitup-control-active'),
+               classes: $filter.attr('class')
+             });
+           });
+         });
+         
+         // Test active filter detection
+         var activeFilters = instance.Utils.Page.getActiveFilters({ $container: instance.$container });
+         console.log('[DEBUG] Active filters detected:', activeFilters);
+         
+         // Test manual filter application
+         console.log('[DEBUG] Testing manual handleFilterChange...');
+         return instance.handleFilterChange().then(function() {
+           console.log('[DEBUG] Manual filter change completed');
+         }).catch(function(error) {
+           console.error('[DEBUG] Manual filter change error:', error);
+         });
+       }
+     }
+     console.error('[DEBUG] No DynamicList instance found');
+     return false;
+   };
+   
+   window.debugSimulateFilter = function(fieldName, value) {
+     var containers = $('[data-dynamic-lists-id]');
+     if (containers.length > 0) {
+       var id = containers.first().data('dynamic-lists-id');
+       if (window['DynamicList_' + id]) {
+         var instance = window['DynamicList_' + id];
+         
+         console.log('[DEBUG] === SIMULATING FILTER APPLICATION ===');
+         console.log('[DEBUG] Field:', fieldName, 'Value:', value);
+         
+         // Find the filter element
+         var $filterElement = instance.$container.find('.hidden-filter-controls-filter[data-field="' + fieldName + '"][data-value="' + value + '"]');
+         
+         if (!$filterElement.length) {
+           console.error('[DEBUG] Filter element not found for field:', fieldName, 'value:', value);
+           console.log('[DEBUG] Available filter elements:');
+           instance.$container.find('.hidden-filter-controls-filter').each(function() {
+             var $el = $(this);
+             console.log('[DEBUG]   Field:', $el.data('field'), 'Value:', $el.data('value'), 'Type:', $el.data('type'));
+           });
+           return false;
+         }
+         
+         console.log('[DEBUG] Found filter element:', $filterElement[0]);
+         console.log('[DEBUG] Element is currently active:', $filterElement.hasClass('mixitup-control-active'));
+         
+         // Activate the filter
+         if (!$filterElement.hasClass('mixitup-control-active')) {
+           console.log('[DEBUG] Activating filter element...');
+           instance.toggleFilterElement($filterElement, true);
+         }
+         
+         // Check if it's now active
+         console.log('[DEBUG] Element is now active:', $filterElement.hasClass('mixitup-control-active'));
+         
+         // Get active filters after activation
+         var activeFilters = instance.Utils.Page.getActiveFilters({ $container: instance.$container });
+         console.log('[DEBUG] Active filters after activation:', activeFilters);
+         
+         // Manually trigger filter change
+         console.log('[DEBUG] Triggering handleFilterChange...');
+         return instance.handleFilterChange().then(function() {
+           console.log('[DEBUG] Filter change completed successfully');
+           return true;
+         }).catch(function(error) {
+           console.error('[DEBUG] Filter change error:', error);
+           return false;
          });
        }
      }
