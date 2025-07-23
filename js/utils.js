@@ -1721,6 +1721,14 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
       }
     }
     
+    // Add filter conditions
+    if (options.filterQuery && !_.isEmpty(options.filterQuery)) {
+      var filterCondition = buildFilterCondition(options.filterQuery);
+      if (filterCondition) {
+        whereConditions.push(filterCondition);
+      }
+    }
+    
     // Combine conditions with $and if multiple exist
     if (whereConditions.length === 1) {
       query.where = whereConditions[0];
@@ -1780,6 +1788,114 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
     return {
       $or: orConditions
     };
+  }
+
+  /**
+   * Build filter condition with AND within columns and OR across columns
+   * Uses $eq for exact matching (not substring matching)
+   * @param {Object} filterQuery - Filter parameters  
+   * @param {Object} filterQuery.filters - Active filters { fieldName: [values] }
+   * @returns {Object} Filter condition object
+   */
+  function buildFilterCondition(filterQuery) {
+    var filters = filterQuery.filters || filterQuery;
+    
+    if (!filters || _.isEmpty(filters)) {
+      return null;
+    }
+    
+    console.log('[Utils] Building filter condition:', filters);
+    
+    var columnConditions = [];
+    
+    // Process each column's filters
+    Object.keys(filters).forEach(function(fieldName) {
+      var values = filters[fieldName];
+      
+      if (!values || !values.length) {
+        return;
+      }
+      
+      // Single value in column - direct condition
+      if (values.length === 1) {
+        var singleCondition = {};
+        singleCondition[fieldName] = {
+          $eq: values[0]
+        };
+        columnConditions.push(singleCondition);
+        return;
+      }
+      
+      // Multiple values in column - AND logic within column
+      // Each value must match (contains all selected values)
+      var andConditions = [];
+      values.forEach(function(value) {
+        var valueCondition = {};
+        valueCondition[fieldName] = {
+          $eq: value
+        };
+        andConditions.push(valueCondition);
+      });
+      
+      columnConditions.push({
+        $and: andConditions
+      });
+    });
+    
+    // Single column with filters
+    if (columnConditions.length === 1) {
+      return columnConditions[0];
+    }
+    
+    // Multiple columns - OR logic across columns
+    if (columnConditions.length > 1) {
+      return {
+        $or: columnConditions
+      };
+    }
+    
+    return null;
+  }
+
+  /**
+   * Load filter values using connection.getIndexes()
+   * @param {Object} options - Options for loading filter values
+   * @param {Array} options.fields - Field names to get values for
+   * @param {String} options.dataSourceId - Data source ID
+   * @returns {Promise} Promise that resolves with filter values
+   */
+  function loadFilterValues(options) {
+    options = options || {};
+    
+    var fields = options.fields || [];
+    var dataSourceId = options.dataSourceId;
+    
+    if (!fields.length || !dataSourceId) {
+      return Promise.resolve({});
+    }
+    
+    console.log('[Utils] Loading filter values for fields:', fields);
+    
+    var connectionOptions = {
+      offline: true
+    };
+
+    if (options.config && options.config.hasOwnProperty('cache')) {
+      connectionOptions.offline = options.config.cache;
+    }
+
+    return Fliplet.DataSources.connect(dataSourceId, connectionOptions)
+      .then(function(connection) {
+        return connection.getIndexes(fields);
+      })
+      .then(function(values) {
+        console.log('[Utils] Loaded filter values:', values);
+        return values;
+      })
+      .catch(function(error) {
+        console.error('[Utils] Error loading filter values:', error);
+        return {};
+      });
   }
 
   /**
@@ -3593,7 +3709,9 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
       
       // Query building functions
       buildPaginatedQuery: buildPaginatedQuery,
-      buildSearchCondition: buildSearchCondition
+      buildSearchCondition: buildSearchCondition,
+      buildFilterCondition: buildFilterCondition,
+      loadFilterValues: loadFilterValues
     },
     User: {
       isAdmin: userIsAdmin,

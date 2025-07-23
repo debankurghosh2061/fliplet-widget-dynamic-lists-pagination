@@ -139,6 +139,31 @@ DynamicList.prototype.toggleFilterElement = function(target, toggle) {
   });
 };
 
+/**
+ * Handle filter state changes - resets pagination and triggers data reload
+ */
+DynamicList.prototype.handleFilterChange = function() {
+  var _this = this;
+  
+  console.log('[DynamicList] Filter state changed');
+  
+  // If lazy loading is enabled, reset pagination and invalidate cache
+  if (_this.lazyLoadingEnabled && _this.paginationManager) {
+    console.log('[DynamicList] Resetting pagination due to filter change');
+    _this.paginationManager.reset();
+    _this.paginationManager.invalidateCache();
+  }
+  
+  // Get current filter state to check if filtering is active
+  var activeFilters = _this.Utils.Page.getActiveFilters({ $container: _this.$container });
+  _this.isFiltering = !_.isEmpty(activeFilters);
+  
+  // Trigger search/filter with reset pagination
+  return _this.searchData({
+    resetPagination: true
+  });
+};
+
 DynamicList.prototype.hideFilterOverlay = function() {
   this.$container.find('.simple-list-search-filter-overlay').removeClass('display');
   this.$container.find('.simple-list-container').removeClass('overlay-active');
@@ -264,7 +289,7 @@ DynamicList.prototype.attachObservers = function() {
       }
 
       _this.hideFilterOverlay();
-      _this.searchData();
+      _this.handleFilterChange();
     })
     .on('click keydown', '.clear-filters', function(event) {
       if (!_this.Utils.accessibilityHelpers.isExecute(event)) {
@@ -300,7 +325,7 @@ DynamicList.prototype.attachObservers = function() {
       if ($filter.parents('.inline-filter-holder').length) {
         // @HACK Skip an execution loop to allow custom handlers to update the filters
         setTimeout(function() {
-          _this.searchData();
+          _this.handleFilterChange();
         }, 0);
       }
     })
@@ -334,7 +359,7 @@ DynamicList.prototype.attachObservers = function() {
       if ($filters.parents('.inline-filter-holder').length) {
         // @HACK Skip an execution loop to allow custom handlers to update the filters
         setTimeout(function() {
-          _this.searchData();
+          _this.handleFilterChange();
         }, 0);
       }
     })
@@ -1297,12 +1322,24 @@ DynamicList.prototype.loadDataWithCurrentState = function(options) {
     };
   }
   
+  // Get current filter state
+  var filterQuery = null;
+  if (_this.lazyLoadingEnabled) {
+    var activeFilters = _this.Utils.Page.getActiveFilters({ $container: _this.$container });
+    if (activeFilters && !_.isEmpty(activeFilters)) {
+      filterQuery = {
+        filters: activeFilters
+      };
+    }
+  }
+  
   var queryOptions = {
     append: options.append || false,
-    searchQuery: searchQuery
+    searchQuery: searchQuery,
+    filterQuery: filterQuery
   };
   
-  console.log('[DynamicList] Loading data with current state, append:', queryOptions.append, 'search:', !!searchQuery);
+  console.log('[DynamicList] Loading data with current state, append:', queryOptions.append, 'search:', !!searchQuery, 'filter:', !!filterQuery);
   
   return _this.paginationManager.loadPage(_this.paginationManager.currentPage, queryOptions)
     .then(function(result) {
@@ -2104,6 +2141,43 @@ if (typeof window !== 'undefined') {
      return false;
    };
    
+   window.testFilter = function(fieldName, values) {
+     var containers = $('[data-dynamic-lists-id]');
+     if (containers.length > 0) {
+       var id = containers.first().data('dynamic-lists-id');
+       if (window['DynamicList_' + id]) {
+         var instance = window['DynamicList_' + id];
+         console.log('[DEBUG] Testing filter - field:', fieldName, 'values:', values);
+         
+         // Simulate filter selection by programmatically activating filter elements
+         if (fieldName && values) {
+           var valueArray = Array.isArray(values) ? values : [values];
+           valueArray.forEach(function(value) {
+             var $filterElement = instance.$container.find('.hidden-filter-controls-filter[data-field="' + fieldName + '"][data-value="' + value + '"]');
+             if ($filterElement.length) {
+               console.log('[DEBUG] Activating filter element:', $filterElement.get(0));
+               instance.toggleFilterElement($filterElement, true);
+             } else {
+               console.log('[DEBUG] Filter element not found for field:', fieldName, 'value:', value);
+             }
+           });
+           
+           // Trigger filter change
+           return instance.handleFilterChange().then(function(result) {
+             console.log('[DEBUG] Filter test completed:', result);
+           }).catch(function(error) {
+             console.error('[DEBUG] Filter test error:', error);
+           });
+         } else {
+           console.log('[DEBUG] Current active filters:', instance.Utils.Page.getActiveFilters({ $container: instance.$container }));
+           return Promise.resolve();
+         }
+       }
+     }
+     console.error('[DEBUG] No DynamicList instance found');
+     return false;
+   };
+   
    window.testSearch = function(searchTerm) {
      var containers = $('[data-dynamic-lists-id]');
      if (containers.length > 0) {
@@ -2251,6 +2325,37 @@ DynamicList.prototype.getPermissions = function(entries) {
 DynamicList.prototype.addFilters = function(records) {
   // Function that renders the filters
   var _this = this;
+  
+  // If lazy loading is enabled, use server-side filter value loading
+  if (_this.lazyLoadingEnabled && _this.data.filterFields && _this.data.filterFields.length) {
+    console.log('[DynamicList] Loading filter values server-side');
+    
+    return _this.Utils.Records.loadFilterValues({
+      fields: _this.data.filterFields,
+      dataSourceId: _this.data.dataSourceId,
+      config: _this.data
+    }).then(function(filterValues) {
+      console.log('[DynamicList] Server-side filter values loaded:', filterValues);
+      
+      // Convert server-side filter values to client-side filter format
+      var filters = _this.buildFiltersFromServerValues(filterValues);
+      
+      return _this.renderFiltersUI(filters, records);
+    }).catch(function(error) {
+      console.error('[DynamicList] Failed to load server-side filter values, falling back to client-side:', error);
+      return _this.addFiltersClientSide(records);
+    });
+  }
+  
+  // Legacy client-side filter parsing
+  return _this.addFiltersClientSide(records);
+};
+
+DynamicList.prototype.addFiltersClientSide = function(records) {
+  var _this = this;
+  
+  console.log('[DynamicList] Using client-side filter value parsing');
+  
   var filters = _this.Utils.Records.parseFilters({
     records: records,
     filters: _this.data.filterFields,
@@ -2259,6 +2364,47 @@ DynamicList.prototype.addFilters = function(records) {
     filterTypes: _this.filterTypes
   });
 
+  return _this.renderFiltersUI(filters, records);
+};
+
+DynamicList.prototype.buildFiltersFromServerValues = function(filterValues) {
+  var _this = this;
+  var filters = [];
+  
+  if (!_this.data.filterFields || !filterValues) {
+    return filters;
+  }
+  
+  _this.data.filterFields.forEach(function(fieldName) {
+    var values = filterValues[fieldName];
+    
+    if (!values || !values.length) {
+      return;
+    }
+    
+    // Convert values to the format expected by the UI
+    var filterData = values.map(function(value) {
+      return {
+        name: value,
+        totalEntries: 1 // Server doesn't provide counts yet
+      };
+    });
+    
+    var filter = {
+      name: fieldName,
+      type: _this.filterTypes[fieldName] || 'toggle',
+      data: filterData
+    };
+    
+    filters.push(filter);
+  });
+  
+  return filters;
+};
+
+DynamicList.prototype.renderFiltersUI = function(filters, records) {
+  var _this = this;
+  
   return Fliplet.Hooks.run('flListDataBeforeRenderFilters', {
     instance: _this,
     filters: filters,
