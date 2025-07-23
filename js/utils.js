@@ -1761,7 +1761,7 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
     // Single field - direct condition
     if (fields.length === 1) {
       var condition = {};
-      condition['data.' + fields[0]] = {
+      condition[fields[0]] = {
         $iLike: value
       };
       return condition;
@@ -1771,7 +1771,7 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
     var orConditions = [];
     fields.forEach(function(field) {
       var fieldCondition = {};
-      fieldCondition['data.' + field] = {
+      fieldCondition[field] = {
         $iLike: value
       };
       orConditions.push(fieldCondition);
