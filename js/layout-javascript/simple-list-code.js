@@ -503,32 +503,50 @@ DynamicList.prototype.attachObservers = function() {
 
       Fliplet.Page.Context.remove('dynamicListFilterHideControls');
 
-      if (_this.data.filtersInOverlay) {
-        $parentElement.find('.simple-list-search-filter-overlay').addClass('display');
-        _this.$container.find('.simple-list-container').addClass('overlay-active');
-        $('body').addClass('lock has-filter-overlay');
+      // Debug filter loading state
+      console.log('[DEBUG] Filter icon clicked - filtersNeedLoading:', _this.filtersNeedLoading);
+      console.log('[DEBUG] Filter icon clicked - lazyLoadingEnabled:', _this.lazyLoadingEnabled);
+      console.log('[DEBUG] Filter icon clicked - filterFields:', _this.filterFields);
+      console.log('[DEBUG] Filter icon clicked - data.filterFields:', _this.data.filterFields);
 
-        _this.$container.find('.simple-list-search-filter-overlay .simple-list-overlay-close').focus();
-        _this.$container.find('.dynamic-list-add-item').addClass('hidden');
+      // Load filters on demand if they haven't been loaded yet
+      var filterLoadPromise = _this.filtersNeedLoading ? _this.loadFiltersOnDemand() : Promise.resolve();
+      
+      console.log('[DEBUG] Filter load promise created, filtersNeedLoading was:', _this.filtersNeedLoading);
+      
+      filterLoadPromise.then(function() {
+        console.log('[DEBUG] Filter load promise resolved, now opening UI');
+        
+        if (_this.data.filtersInOverlay) {
+          $parentElement.find('.simple-list-search-filter-overlay').addClass('display');
+          _this.$container.find('.simple-list-container').addClass('overlay-active');
+          $('body').addClass('lock has-filter-overlay');
+
+          _this.$container.find('.simple-list-search-filter-overlay .simple-list-overlay-close').focus();
+          _this.$container.find('.dynamic-list-add-item').addClass('hidden');
+
+          Fliplet.Analytics.trackEvent({
+            category: 'list_dynamic_' + _this.data.layout,
+            action: 'search_filter_controls_overlay_activate'
+          });
+
+          return;
+        }
+
+        $parentElement.find('.hidden-filter-controls').addClass('active');
+        $parentElement.find('.list-search-cancel').addClass('active').focus();
+        $parentElement.find('.hidden-filter-controls-filter-container').removeClass('hidden');
+        $elementClicked.addClass('active');
+
+        _this.calculateFiltersHeight();
 
         Fliplet.Analytics.trackEvent({
           category: 'list_dynamic_' + _this.data.layout,
-          action: 'search_filter_controls_overlay_activate'
+          action: 'search_filter_controls_activate'
         });
-
-        return;
-      }
-
-      $parentElement.find('.hidden-filter-controls').addClass('active');
-      $parentElement.find('.list-search-cancel').addClass('active').focus();
-      $parentElement.find('.hidden-filter-controls-filter-container').removeClass('hidden');
-      $elementClicked.addClass('active');
-
-      _this.calculateFiltersHeight();
-
-      Fliplet.Analytics.trackEvent({
-        category: 'list_dynamic_' + _this.data.layout,
-        action: 'search_filter_controls_activate'
+      }).catch(function(error) {
+        console.error('[DEBUG] Error loading filters on demand:', error);
+        // Show fallback UI or toast notification if needed
       });
     })
     .on('click keydown', '.simple-list-overlay-close', function(event) {
