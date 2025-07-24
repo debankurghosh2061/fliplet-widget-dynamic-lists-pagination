@@ -1387,8 +1387,17 @@ DynamicList.prototype.loadDataWithCurrentState = function(options) {
   
   console.log('[DynamicList] Loading data with current state, append:', queryOptions.append, 'search:', !!searchQuery, 'filter:', !!filterQuery);
   
-  return _this.paginationManager.loadPage(_this.paginationManager.currentPage, queryOptions)
-    .then(function(result) {
+  // If append is true, load the next page; otherwise load the current page
+  var loadPromise;
+  if (options.append) {
+    console.log('[DynamicList] Loading NEXT page with preserved state - currentPage:', _this.paginationManager.currentPage);
+    loadPromise = _this.paginationManager.loadNextPage(queryOptions);
+  } else {
+    console.log('[DynamicList] Loading current page with state - page:', _this.paginationManager.currentPage);
+    loadPromise = _this.paginationManager.loadPage(_this.paginationManager.currentPage, queryOptions);
+  }
+  
+  return loadPromise.then(function(result) {
       if (!result.fromCache) {
         return _this.updateUIWithResults(result.records, queryOptions);
       }
@@ -2081,17 +2090,18 @@ DynamicList.prototype.loadNextPage = function() {
     return Promise.resolve();
   }
   
-  console.log('[DynamicList] Loading next page');
+  console.log('[DynamicList] Loading next page with current search/filter state');
   
   // Show loading indicator
   _this.showLoadingIndicator();
   
-  return _this.paginationManager.loadNextPage({})
+  // Use loadDataWithCurrentState to preserve search and filter state
+  return _this.loadDataWithCurrentState({ append: true })
     .then(function(result) {
       _this.hideLoadingIndicator();
       
-      if (result.records.length) {
-        return _this.updateUIWithResults(result.records, { append: true });
+      if (result && result.records && result.records.length) {
+        return result;
       }
       
       return [];
