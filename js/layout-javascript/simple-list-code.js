@@ -76,6 +76,8 @@ function DynamicList(id, data) {
   this.paginationManager = null;
   this.lazyLoadObserver = null;
   this.lazyLoadingEnabled = false;
+  this.filtersNeedLoading = false;  // Flag to indicate filters need to be loaded
+  this.filterFields = null;         // Store filter fields for on-demand loading
 
   this.data.bookmarksEnabled = _.get(this, 'data.social.bookmark');
 
@@ -2470,38 +2472,27 @@ DynamicList.prototype.addFilters = function(records) {
     recordsLength: records ? records.length : 0
   });
   
-  // If lazy loading is enabled, use server-side filter value loading
+  // If lazy loading is enabled, defer filter loading until user opens filters
   if (_this.lazyLoadingEnabled && _this.data.filterFields && _this.data.filterFields.length) {
-    console.log('[DynamicList] Loading filter values server-side');
-    console.log('[DynamicList] Filter fields configured:', _this.data.filterFields);
-    console.log('[DynamicList] Data source ID:', _this.data.dataSourceId);
+    console.log('[DynamicList] Deferring filter value loading until user opens filters');
     
-    return _this.Utils.Records.loadFilterValues({
-      fields: _this.data.filterFields,
-      dataSourceId: _this.data.dataSourceId,
-      config: _this.data
-    }).then(function(filterValues) {
-      console.log('[DynamicList] Server-side filter values loaded:', filterValues);
-      
-      // Convert server-side filter values to client-side filter format
-      var filters = _this.buildFiltersFromServerValues(filterValues);
-      
-      return _this.renderFiltersUI(filters, records);
-    }).catch(function(error) {
-      console.error('[DynamicList] Failed to load server-side filter values, falling back to client-side:', error);
-      return _this.addFiltersClientSide(records);
-    });
+    // Set a flag to indicate filters need to be loaded
+    _this.filtersNeedLoading = true;
+    _this.filterFields = _this.data.filterFields;
+    
+    // Render empty filter UI structure for now (quick, non-blocking)
+    return _this.renderEmptyFiltersUI();
   }
   
   // Legacy client-side filter parsing
   return _this.addFiltersClientSide(records);
 };
 
+/**
+ * Client-side filter parsing (original implementation)
+ */
 DynamicList.prototype.addFiltersClientSide = function(records) {
   var _this = this;
-  
-  console.log('[DynamicList] Using client-side filter value parsing');
-  
   var filters = _this.Utils.Records.parseFilters({
     records: records,
     filters: _this.data.filterFields,
@@ -2510,7 +2501,94 @@ DynamicList.prototype.addFiltersClientSide = function(records) {
     filterTypes: _this.filterTypes
   });
 
-  return _this.renderFiltersUI(filters, records);
+  return Fliplet.Hooks.run('flListDataBeforeRenderFilters', {
+    instance: _this,
+    filters: filters,
+    records: records,
+    config: _this.data
+  }).then(function() {
+    var filtersTemplate = Fliplet.Widget.Templates[_this.layoutMapping[_this.data.layout]['filter']];
+
+    var filtersData = {
+      filtersInOverlay: _this.data.filtersInOverlay,
+      filters: filters
+    };
+    var template = _this.data.advancedSettings && _this.data.advancedSettings.filterHTML
+      ? Handlebars.compile(_this.data.advancedSettings.filterHTML)
+      : Handlebars.compile(filtersTemplate());
+
+    _.remove(filters, function(filter) {
+      return _.isEmpty(filter.data);
+    });
+    
+    _this.Utils.Page.renderFilters({
+      instance: _this,
+      html: template(filtersData)
+    });
+    
+    Fliplet.Hooks.run('flListDataAfterRenderFilters', {
+      instance: _this,
+      filters: filters,
+      records: records,
+      config: _this.data
+    });
+  });
+};
+
+/**
+ * Render empty filter UI structure without loading filter values
+ * This is fast and non-blocking
+ */
+DynamicList.prototype.renderEmptyFiltersUI = function() {
+  var _this = this;
+  
+  // Create minimal filter UI structure
+  var filtersHtml = '<div class="filter-holder"><div class="loading-filters" style="padding: 20px; text-align: center; color: #666;"><i class="fa fa-info-circle"></i> Filters will load when opened</div></div>';
+  
+  _this.Utils.Page.renderFilters({
+    instance: _this,
+    html: filtersHtml
+  });
+  
+  return Promise.resolve();
+};
+
+/**
+ * Load filter values on demand when user opens filters
+ */
+DynamicList.prototype.loadFiltersOnDemand = function() {
+  var _this = this;
+  
+  if (!_this.filtersNeedLoading) {
+    return Promise.resolve(); // Already loaded
+  }
+  
+  console.log('[DynamicList] Loading filters on demand...');
+  
+  // Show loading state
+  _this.$container.find('.filter-holder').html('<div class="loading-filters" style="padding: 20px; text-align: center;"><i class="fa fa-spinner fa-spin"></i> Loading filters...</div>');
+  
+  return _this.Utils.Records.loadFilterValues({
+    fields: _this.filterFields,
+    dataSourceId: _this.data.dataSourceId,
+    config: _this.data
+  }).then(function(filterValues) {
+    console.log('[DynamicList] On-demand filter values loaded:', filterValues);
+    
+    // Convert server-side filter values to client-side filter format
+    var filters = _this.buildFiltersFromServerValues(filterValues);
+    
+    // Mark as loaded
+    _this.filtersNeedLoading = false;
+    
+    return _this.renderFiltersUI(filters, []);
+  }).catch(function(error) {
+    console.error('[DynamicList] Failed to load on-demand filter values, falling back to client-side:', error);
+    
+    // Fallback to client-side parsing if server-side fails
+    _this.filtersNeedLoading = false;
+    return _this.addFiltersClientSide([]);
+  });
 };
 
 DynamicList.prototype.buildFiltersFromServerValues = function(filterValues) {
