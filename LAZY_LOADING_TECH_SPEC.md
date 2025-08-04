@@ -1019,4 +1019,62 @@ connection.find({
 - Periodically clean up old cached pages
 - Monitor memory usage and implement warnings for excessive growth
 
+### 9.4 Hook Compatibility Implementation
+
+The `flListDataAfterGetData` hook has been updated to work with lazy loading:
+
+```javascript
+// In updateUIWithResults() method - simple-list-code.js:1430
+return Fliplet.Hooks.run('flListDataAfterGetData', {
+  instance: _this,
+  config: _this.data,
+  id: _this.data.id,
+  uuid: _this.data.uuid,
+  container: _this.$container,
+  records: records, // Current page records
+  // NEW: Pagination context
+  pagination: {
+    isPagedData: true,
+    currentPage: _this.paginationManager.currentPage,
+    pageSize: _this.paginationManager.pageSize,
+    hasMore: _this.paginationManager.hasMore,
+    append: queryOptions.append
+  }
+}).then(function(hookResult) {
+  // Hook can modify records by returning { records: modifiedRecords }
+  var processedRecords = hookResult && hookResult.records ? hookResult.records : records;
+  // Continue with processing...
+});
+```
+
+**Hook Handler Adaptation:**
+```javascript
+// Example hook handler that works with both legacy and lazy loading
+Fliplet.Hooks.on('flListDataAfterGetData', function(data) {
+  if (data.pagination && data.pagination.isPagedData) {
+    // Handle paginated data - process each page
+    console.log('Processing page', data.pagination.currentPage, 'with', data.records.length, 'records');
+  } else {
+    // Handle legacy data - all records at once
+    console.log('Processing all', data.records.length, 'records');
+  }
+  
+  // Modify records if needed
+  var modifiedRecords = data.records.map(function(record) {
+    // Apply transformations
+    return record;
+  });
+  
+  return Promise.resolve({ records: modifiedRecords });
+});
+```
+
+**Feature Detection Update:**
+```javascript
+// utils.js:1021 - Updated to allow hooks with lazy loading
+if (Fliplet.Hooks.has('flListDataAfterGetData') && config.disableLazyLoadingForHooks) {
+  reasons.push('afterGetDataHook'); // Only disable if explicitly configured
+}
+```
+
 This implementation provides a comprehensive solution for true server-side lazy loading while maintaining full backward compatibility and providing a smooth user experience. 

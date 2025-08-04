@@ -1016,7 +1016,9 @@ Fliplet.Registry.set('dynamicListUtils', (function() {
       reasons.push('computedFields');
     }
 
-    if (Fliplet.Hooks.has('flListDataAfterGetData')) {
+    // flListDataAfterGetData hook is now supported in lazy loading mode
+    // Only disable lazy loading if explicitly configured to do so
+    if (Fliplet.Hooks.has('flListDataAfterGetData') && config.disableLazyLoadingForHooks) {
       reasons.push('afterGetDataHook');
     }
 

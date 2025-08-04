@@ -1426,10 +1426,31 @@ DynamicList.prototype.updateUIWithResults = function(records, queryOptions) {
     config: _this.data,
     filterTypes: _this.filterTypes
   });
-  
-  return _this.Utils.Records.updateFiles({
+
+  // Run flListDataAfterGetData hook for paginated data
+  return Fliplet.Hooks.run('flListDataAfterGetData', {
+    instance: _this,
+    config: _this.data,
+    id: _this.data.id,
+    uuid: _this.data.uuid,
+    container: _this.$container,
     records: records,
-    config: _this.data
+    // Add pagination context to help hook handlers adapt their behavior
+    pagination: {
+      isPagedData: true,
+      currentPage: _this.paginationManager.currentPage,
+      pageSize: _this.paginationManager.pageSize,
+      hasMore: _this.paginationManager.hasMore,
+      append: queryOptions.append
+    }
+  }).then(function(hookResult) {
+    // Use modified records if hook returned them, otherwise use original records
+    var processedRecords = hookResult && hookResult.records ? hookResult.records : records;
+    
+    return _this.Utils.Records.updateFiles({
+      records: processedRecords,
+      config: _this.data
+    });
   }).then(function(processedRecords) {
     // Add summary data for rendering
     var modifiedData = _this.addSummaryData(processedRecords);
