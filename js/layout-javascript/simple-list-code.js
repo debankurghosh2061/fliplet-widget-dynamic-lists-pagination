@@ -1488,8 +1488,12 @@ DynamicList.prototype.updateUIWithResults = function(records, queryOptions) {
       console.log('[DynamicList] NOT setting up lazy load observer. Records:', renderedRecords.length, 'hasMore:', _this.paginationManager.hasMore);
     }
     
-    // Initialize social features
-    return _this.initializeSocials(renderedRecords);
+    // Initialize social features - wait a bit for DOM to be fully ready
+    return new Promise(function(resolve) {
+      setTimeout(function() {
+        _this.initializeSocials(renderedRecords).then(resolve);
+      }, 10);
+    });
   });
 };
 
@@ -1758,7 +1762,10 @@ DynamicList.prototype.renderLoopSegment = function(options) {
         // if the browser is ready, render
         requestAnimationFrame(render);
       } else {
-        resolve(data);
+        // Ensure DOM is ready before resolving
+        requestAnimationFrame(function() {
+          resolve(data);
+        });
       }
     }
 
@@ -1791,21 +1798,24 @@ DynamicList.prototype.lazyLoadMore = function() {
       renderedRecords: renderedRecords
     });
 
-    _this.initializeSocials(renderedRecords).then(function() {
-      return Fliplet.Hooks.run('flListDataAfterRenderMoreListSocial', {
-        instance: _this,
-        records: _this.searchedListItems,
-        renderedRecords: renderedRecords,
-        config: _this.data,
-        sortField: _this.sortField,
-        sortOrder: _this.sortOrder,
-        activeFilters: _this.activeFilters,
-        showBookmarks: _this.showBookmarks,
-        id: _this.data.id,
-        uuid: _this.data.uuid,
-        container: _this.$container
+    // Wait for DOM to be ready before initializing social features
+    setTimeout(function() {
+      _this.initializeSocials(renderedRecords).then(function() {
+        return Fliplet.Hooks.run('flListDataAfterRenderMoreListSocial', {
+          instance: _this,
+          records: _this.searchedListItems,
+          renderedRecords: renderedRecords,
+          config: _this.data,
+          sortField: _this.sortField,
+          sortOrder: _this.sortOrder,
+          activeFilters: _this.activeFilters,
+          showBookmarks: _this.showBookmarks,
+          id: _this.data.id,
+          uuid: _this.data.uuid,
+          container: _this.$container
+        });
       });
-    });
+    }, 10);
 
     // Update selected highlight size in Edit
     Fliplet.Widget.updateHighlightDimensions(_this.data.id);
@@ -2930,23 +2940,26 @@ DynamicList.prototype.searchData = function(options) {
         return records;
       });
     }).then(function(renderedRecords) {
-      _this.initializeSocials(renderedRecords).then(function() {
-        return Fliplet.Hooks.run('flListDataAfterRenderListSocial', {
-          instance: _this,
-          value: value,
-          records: _this.searchedListItems,
-          renderedRecords: renderedRecords,
-          config: _this.data,
-          sortField: _this.sortField,
-          sortOrder: _this.sortOrder,
-          activeFilters: _this.activeFilters,
-          showBookmarks: _this.showBookmarks,
-          id: _this.data.id,
-          uuid: _this.data.uuid,
-          container: _this.$container,
-          initialRender: !!options.initialRender
+      // Wait for DOM to be ready before initializing social features
+      setTimeout(function() {
+        _this.initializeSocials(renderedRecords).then(function() {
+          return Fliplet.Hooks.run('flListDataAfterRenderListSocial', {
+            instance: _this,
+            value: value,
+            records: _this.searchedListItems,
+            renderedRecords: renderedRecords,
+            config: _this.data,
+            sortField: _this.sortField,
+            sortOrder: _this.sortOrder,
+            activeFilters: _this.activeFilters,
+            showBookmarks: _this.showBookmarks,
+            id: _this.data.id,
+            uuid: _this.data.uuid,
+            container: _this.$container,
+            initialRender: !!options.initialRender
+          });
         });
-      });
+      }, 10);
 
       // Update selected highlight size in Edit
       Fliplet.Widget.updateHighlightDimensions(_this.data.id);
