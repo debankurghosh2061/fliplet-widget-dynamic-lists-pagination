@@ -1379,13 +1379,31 @@ DynamicList.prototype.loadDataWithCurrentState = function(options) {
     }
   }
   
+  // Get current bookmark filter state
+  var showBookmarks = _this.$container.find('.toggle-bookmarks').hasClass('mixitup-control-active');
+  
   var queryOptions = {
     append: options.append || false,
     searchQuery: searchQuery,
-    filterQuery: filterQuery
+    filterQuery: filterQuery,
+    showBookmarks: showBookmarks
   };
   
-  console.log('[DynamicList] Loading data with current state, append:', queryOptions.append, 'search:', !!searchQuery, 'filter:', !!filterQuery);
+  console.log('[DynamicList] Loading data with current state, append:', queryOptions.append, 'search:', !!searchQuery, 'filter:', !!filterQuery, 'bookmarks:', showBookmarks);
+  
+  // Special handling for bookmark filtering - show all bookmarked entries at once
+  if (showBookmarks) {
+    console.log('[DynamicList] Bookmark filtering active - loading all bookmarked entries');
+    
+    // Update state
+    _this.showBookmarks = true;
+    _this.$container.find('.simple-list-container').addClass('loading');
+    
+    return _this.loadBookmarkedEntries();
+  } else {
+    // Ensure bookmark state is reset when not filtering
+    _this.showBookmarks = false;
+  }
   
   // If append is true, load the next page; otherwise load the current page
   var loadPromise;
@@ -1404,6 +1422,50 @@ DynamicList.prototype.loadDataWithCurrentState = function(options) {
       
       return result;
     });
+};
+
+/**
+ * Load all bookmarked entries (no pagination)
+ */
+DynamicList.prototype.loadBookmarkedEntries = function() {
+  var _this = this;
+  
+  // First get all bookmarks for the current user
+  return _this.getAllBookmarks().then(function() {
+    // Get all bookmarked entry IDs
+    var bookmarkedIds = [];
+    
+    if (_this.listItems) {
+      bookmarkedIds = _.compact(_.map(_this.listItems, function(item) {
+        return item.bookmarked ? item.id : null;
+      }));
+    }
+    
+    console.log('[DynamicList] Found bookmarked IDs:', bookmarkedIds);
+    
+    if (bookmarkedIds.length === 0) {
+      // No bookmarked entries - show empty result
+      return _this.updateUIWithResults([], { showBookmarks: true });
+    }
+    
+    // Query the main data source for bookmarked entries
+    var query = {
+      where: {
+        id: { $in: bookmarkedIds }
+      }
+    };
+    
+    console.log('[DynamicList] Querying for bookmarked entries with query:', query);
+    
+    return Fliplet.DataSources.connect(_this.data.dataSourceId).then(function(dataSource) {
+      return dataSource.find(query);
+    }).then(function(bookmarkedEntries) {
+      console.log('[DynamicList] Retrieved bookmarked entries:', bookmarkedEntries.length);
+      
+      // Update the UI with bookmarked entries
+      return _this.updateUIWithResults(bookmarkedEntries, { showBookmarks: true });
+    });
+  });
 };
 
 /**
@@ -1436,7 +1498,11 @@ DynamicList.prototype.updateUIWithResults = function(records, queryOptions) {
     container: _this.$container,
     records: records,
     // Add pagination context to help hook handlers adapt their behavior
-    pagination: {
+    pagination: queryOptions.showBookmarks ? {
+      isPagedData: false,
+      isBookmarkFiltered: true,
+      append: false
+    } : {
       isPagedData: true,
       currentPage: _this.paginationManager.currentPage,
       pageSize: _this.paginationManager.pageSize,
@@ -1455,8 +1521,8 @@ DynamicList.prototype.updateUIWithResults = function(records, queryOptions) {
     // Add summary data for rendering
     var modifiedData = _this.addSummaryData(processedRecords);
     
-    if (!queryOptions.append) {
-      // Clear existing results for initial load
+    if (!queryOptions.append || queryOptions.showBookmarks) {
+      // Clear existing results for initial load or bookmark filtering
       $('#simple-list-wrapper-' + _this.data.id).empty();
       _this.modifiedListItems = modifiedData;
       _this.listItems = processedRecords;
@@ -1469,15 +1535,15 @@ DynamicList.prototype.updateUIWithResults = function(records, queryOptions) {
     // Render the data
     return _this.renderLoopSegment({
       data: modifiedData,
-      append: queryOptions.append
+      append: queryOptions.append && !queryOptions.showBookmarks
     });
   }).then(function(renderedRecords) {
     // Update UI state
     _this.$container.find('.simple-list-container').removeClass('loading').addClass('ready');
     _this.$container.find('.simple-list-container').toggleClass('no-results', !_this.modifiedListItems.length);
     
-    // Setup lazy loading observer for new records
-    if (renderedRecords.length && _this.paginationManager.hasMore) {
+    // Setup lazy loading observer for new records (but not for bookmark filtering)
+    if (renderedRecords.length && _this.paginationManager.hasMore && !queryOptions.showBookmarks) {
       console.log('[DynamicList] Setting up lazy load observer for', renderedRecords.length, 'rendered records');
       console.log('[DynamicList] Rendered record IDs:', renderedRecords.map(function(r) { return r.id; }));
       
@@ -1485,7 +1551,7 @@ DynamicList.prototype.updateUIWithResults = function(records, queryOptions) {
         renderedRecords: renderedRecords
       });
     } else {
-      console.log('[DynamicList] NOT setting up lazy load observer. Records:', renderedRecords.length, 'hasMore:', _this.paginationManager.hasMore);
+      console.log('[DynamicList] NOT setting up lazy load observer. Records:', renderedRecords.length, 'hasMore:', _this.paginationManager ? _this.paginationManager.hasMore : 'N/A', 'bookmarks:', !!queryOptions.showBookmarks);
     }
     
     // Initialize social features - wait for DOM elements to be ready
