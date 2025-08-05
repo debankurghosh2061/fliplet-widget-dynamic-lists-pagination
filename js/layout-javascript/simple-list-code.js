@@ -1430,18 +1430,31 @@ DynamicList.prototype.loadDataWithCurrentState = function(options) {
 DynamicList.prototype.loadBookmarkedEntries = function() {
   var _this = this;
   
-  // First get all bookmarks for the current user
-  return _this.getAllBookmarks().then(function() {
-    // Get all bookmarked entry IDs
-    var bookmarkedIds = [];
+  // Get user-specific bookmarks directly from the bookmark data source
+  return _this.Utils.Query.fetchAndCache({
+    key: 'bookmarks-' + _this.data.bookmarkDataSourceId,
+    waitFor: 400,
+    request: Fliplet.Profile.Content({
+      dataSourceId: _this.data.bookmarkDataSourceId,
+      view: 'userBookmarks'
+    }).then(function(instance) {
+      return instance.query({
+        where: {
+          content: {
+            entryId: { $regex: '\\d-bookmark' }
+          }
+        },
+        exact: false
+      });
+    })
+  }).then(function(results) {
+    // Extract bookmarked entry IDs from the user's bookmark records
+    var bookmarkedIds = _.compact(_.map(results.data, function(record) {
+      var match = _.get(record, 'data.content.entryId', '').match(/(\d*)-bookmark/);
+      return match ? parseInt(match[1], 10) : '';
+    }));
     
-    if (_this.listItems) {
-      bookmarkedIds = _.compact(_.map(_this.listItems, function(item) {
-        return item.bookmarked ? item.id : null;
-      }));
-    }
-    
-    console.log('[DynamicList] Found bookmarked IDs:', bookmarkedIds);
+    console.log('[DynamicList] Found user-specific bookmarked IDs:', bookmarkedIds);
     
     if (bookmarkedIds.length === 0) {
       // No bookmarked entries - show empty result
@@ -1455,7 +1468,7 @@ DynamicList.prototype.loadBookmarkedEntries = function() {
       }
     };
     
-    console.log('[DynamicList] Querying for bookmarked entries with query:', query);
+    console.log('[DynamicList] Querying main data source for bookmarked entries with query:', query);
     
     return Fliplet.DataSources.connect(_this.data.dataSourceId).then(function(dataSource) {
       return dataSource.find(query);
