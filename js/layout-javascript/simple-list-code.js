@@ -1430,29 +1430,32 @@ DynamicList.prototype.loadDataWithCurrentState = function(options) {
 DynamicList.prototype.loadBookmarkedEntries = function() {
   var _this = this;
   
-  // Get user-specific bookmarks directly from the bookmark data source
-  return _this.Utils.Query.fetchAndCache({
-    key: 'bookmarks-' + _this.data.bookmarkDataSourceId,
-    waitFor: 400,
-    request: Fliplet.Profile.Content({
-      dataSourceId: _this.data.bookmarkDataSourceId,
-      view: 'userBookmarks'
-    }).then(function(instance) {
-      return instance.query({
-        where: {
-          content: {
-            entryId: { $regex: '\\d-bookmark' }
-          }
-        },
-        exact: false
-      });
-    })
-  }).then(function(results) {
-    // Extract bookmarked entry IDs from the user's bookmark records
-    var bookmarkedIds = _.compact(_.map(results.data, function(record) {
-      var match = _.get(record, 'data.content.entryId', '').match(/(\d*)-bookmark/);
-      return match ? parseInt(match[1], 10) : '';
-    }));
+  // First ensure we have all the data loaded (this is needed for getAllBookmarks to work)
+  var loadAllDataPromise;
+  if (!_this.listItems) {
+    // If we don't have list items loaded, load them first
+    loadAllDataPromise = Fliplet.DataSources.connect(_this.data.dataSourceId).then(function(dataSource) {
+      return dataSource.find();
+    }).then(function(allEntries) {
+      _this.listItems = allEntries;
+      return allEntries;
+    });
+  } else {
+    loadAllDataPromise = Promise.resolve(_this.listItems);
+  }
+  
+  return loadAllDataPromise.then(function() {
+    // Use the existing getAllBookmarks function to fetch bookmarks and set flags
+    return _this.getAllBookmarks();
+  }).then(function() {
+    // Get all bookmarked entry IDs from the items that now have bookmarked flags set
+    var bookmarkedIds = [];
+    
+    if (_this.listItems) {
+      bookmarkedIds = _.compact(_.map(_this.listItems, function(item) {
+        return item.bookmarked ? item.id : null;
+      }));
+    }
     
     console.log('[DynamicList] Found user-specific bookmarked IDs:', bookmarkedIds);
     
@@ -1461,23 +1464,15 @@ DynamicList.prototype.loadBookmarkedEntries = function() {
       return _this.updateUIWithResults([], { showBookmarks: true });
     }
     
-    // Query the main data source for bookmarked entries
-    var query = {
-      where: {
-        id: { $in: bookmarkedIds }
-      }
-    };
-    
-    console.log('[DynamicList] Querying main data source for bookmarked entries with query:', query);
-    
-    return Fliplet.DataSources.connect(_this.data.dataSourceId).then(function(dataSource) {
-      return dataSource.find(query);
-    }).then(function(bookmarkedEntries) {
-      console.log('[DynamicList] Retrieved bookmarked entries:', bookmarkedEntries.length);
-      
-      // Update the UI with bookmarked entries
-      return _this.updateUIWithResults(bookmarkedEntries, { showBookmarks: true });
+    // Filter the list items to only bookmarked entries
+    var bookmarkedEntries = _.filter(_this.listItems, function(item) {
+      return item.bookmarked;
     });
+    
+    console.log('[DynamicList] Retrieved bookmarked entries:', bookmarkedEntries.length);
+    
+    // Update the UI with bookmarked entries
+    return _this.updateUIWithResults(bookmarkedEntries, { showBookmarks: true });
   });
 };
 
