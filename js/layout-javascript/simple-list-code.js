@@ -1381,6 +1381,7 @@ DynamicList.prototype.loadDataWithCurrentState = function(options) {
   
   // Get current bookmark filter state
   var showBookmarks = _this.$container.find('.toggle-bookmarks').hasClass('mixitup-control-active');
+  var wasShowingBookmarks = _this.showBookmarks;
   
   var queryOptions = {
     append: options.append || false,
@@ -1389,7 +1390,7 @@ DynamicList.prototype.loadDataWithCurrentState = function(options) {
     showBookmarks: showBookmarks
   };
   
-  console.log('[DynamicList] Loading data with current state, append:', queryOptions.append, 'search:', !!searchQuery, 'filter:', !!filterQuery, 'bookmarks:', showBookmarks);
+  console.log('[DynamicList] Loading data with current state, append:', queryOptions.append, 'search:', !!searchQuery, 'filter:', !!filterQuery, 'bookmarks:', showBookmarks, 'wasBookmarks:', wasShowingBookmarks);
   
   // Special handling for bookmark filtering - show all bookmarked entries at once
   if (showBookmarks) {
@@ -1401,7 +1402,21 @@ DynamicList.prototype.loadDataWithCurrentState = function(options) {
     
     return _this.loadBookmarkedEntries();
   } else {
-    // Ensure bookmark state is reset when not filtering
+    // Handle transition from bookmark filtering back to normal view
+    if (wasShowingBookmarks && !showBookmarks) {
+      console.log('[DynamicList] Transitioning from bookmark filtering to normal view - resetting state');
+      
+      // Reset pagination to start fresh
+      if (_this.paginationManager) {
+        _this.paginationManager.reset();
+        _this.paginationManager.invalidateCache();
+      }
+      
+      // Force append to false to load first page
+      queryOptions.append = false;
+    }
+    
+    // Update state
     _this.showBookmarks = false;
   }
   
