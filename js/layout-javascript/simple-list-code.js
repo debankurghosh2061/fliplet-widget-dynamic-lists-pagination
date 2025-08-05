@@ -1488,12 +1488,54 @@ DynamicList.prototype.updateUIWithResults = function(records, queryOptions) {
       console.log('[DynamicList] NOT setting up lazy load observer. Records:', renderedRecords.length, 'hasMore:', _this.paginationManager.hasMore);
     }
     
-    // Initialize social features - wait a bit for DOM to be fully ready
-    return new Promise(function(resolve) {
-      setTimeout(function() {
-        _this.initializeSocials(renderedRecords).then(resolve);
-      }, 10);
+    // Initialize social features - wait for DOM elements to be ready
+    return _this.waitForDOMElements(renderedRecords).then(function() {
+      return _this.initializeSocials(renderedRecords);
     });
+  });
+};
+
+/**
+ * Wait for DOM elements to be rendered before initializing social features
+ */
+DynamicList.prototype.waitForDOMElements = function(records) {
+  var _this = this;
+  
+  return new Promise(function(resolve) {
+    var maxAttempts = 50; // Maximum attempts (500ms total)
+    var attempts = 0;
+    
+    function checkElements() {
+      attempts++;
+      
+      // Check if all required elements exist
+      var allElementsExist = records.every(function(record) {
+        var listItemExists = _this.$container.find('.simple-list-item[data-entry-id="' + record.id + '"]').length > 0;
+        var likeHolderExists = _this.$container.find('.simple-list-like-holder-' + record.id).length > 0;
+        var bookmarkHolderExists = _this.$container.find('.simple-list-bookmark-holder-' + record.id).length > 0;
+        
+        if (attempts === 1) {
+          console.log('[DynamicList] DOM check for record', record.id, ':', {
+            listItemExists: listItemExists,
+            likeHolderExists: likeHolderExists,
+            bookmarkHolderExists: bookmarkHolderExists
+          });
+        }
+        
+        return listItemExists && (likeHolderExists || bookmarkHolderExists);
+      });
+      
+      if (allElementsExist || attempts >= maxAttempts) {
+        if (!allElementsExist) {
+          console.warn('[DynamicList] DOM elements not fully ready after', attempts, 'attempts');
+        }
+        resolve();
+      } else {
+        setTimeout(checkElements, 10);
+      }
+    }
+    
+    checkElements();
   });
 };
 
@@ -1798,24 +1840,24 @@ DynamicList.prototype.lazyLoadMore = function() {
       renderedRecords: renderedRecords
     });
 
-    // Wait for DOM to be ready before initializing social features
-    setTimeout(function() {
-      _this.initializeSocials(renderedRecords).then(function() {
-        return Fliplet.Hooks.run('flListDataAfterRenderMoreListSocial', {
-          instance: _this,
-          records: _this.searchedListItems,
-          renderedRecords: renderedRecords,
-          config: _this.data,
-          sortField: _this.sortField,
-          sortOrder: _this.sortOrder,
-          activeFilters: _this.activeFilters,
-          showBookmarks: _this.showBookmarks,
-          id: _this.data.id,
-          uuid: _this.data.uuid,
-          container: _this.$container
-        });
+    // Wait for DOM elements to be ready before initializing social features
+    _this.waitForDOMElements(renderedRecords).then(function() {
+      return _this.initializeSocials(renderedRecords);
+    }).then(function() {
+      return Fliplet.Hooks.run('flListDataAfterRenderMoreListSocial', {
+        instance: _this,
+        records: _this.searchedListItems,
+        renderedRecords: renderedRecords,
+        config: _this.data,
+        sortField: _this.sortField,
+        sortOrder: _this.sortOrder,
+        activeFilters: _this.activeFilters,
+        showBookmarks: _this.showBookmarks,
+        id: _this.data.id,
+        uuid: _this.data.uuid,
+        container: _this.$container
       });
-    }, 10);
+    });
 
     // Update selected highlight size in Edit
     Fliplet.Widget.updateHighlightDimensions(_this.data.id);
@@ -2940,35 +2982,35 @@ DynamicList.prototype.searchData = function(options) {
         return records;
       });
     }).then(function(renderedRecords) {
-      // Wait for DOM to be ready before initializing social features
-      setTimeout(function() {
-        _this.initializeSocials(renderedRecords).then(function() {
-          return Fliplet.Hooks.run('flListDataAfterRenderListSocial', {
-            instance: _this,
-            value: value,
-            records: _this.searchedListItems,
-            renderedRecords: renderedRecords,
-            config: _this.data,
-            sortField: _this.sortField,
-            sortOrder: _this.sortOrder,
-            activeFilters: _this.activeFilters,
-            showBookmarks: _this.showBookmarks,
-            id: _this.data.id,
-            uuid: _this.data.uuid,
-            container: _this.$container,
-            initialRender: !!options.initialRender
-          });
+      // Wait for DOM elements to be ready before initializing social features
+      return _this.waitForDOMElements(renderedRecords).then(function() {
+        return _this.initializeSocials(renderedRecords);
+      }).then(function() {
+        return Fliplet.Hooks.run('flListDataAfterRenderListSocial', {
+          instance: _this,
+          value: value,
+          records: _this.searchedListItems,
+          renderedRecords: renderedRecords,
+          config: _this.data,
+          sortField: _this.sortField,
+          sortOrder: _this.sortOrder,
+          activeFilters: _this.activeFilters,
+          showBookmarks: _this.showBookmarks,
+          id: _this.data.id,
+          uuid: _this.data.uuid,
+          container: _this.$container,
+          initialRender: !!options.initialRender
         });
-      }, 10);
-
-      // Update selected highlight size in Edit
-      Fliplet.Widget.updateHighlightDimensions(_this.data.id);
-
-      _this.Utils.Page.updateActiveFilters({
-        $container: _this.$container,
-        filterOverlayClass: '.simple-list-search-filter-overlay',
-        filtersInOverlay: _this.data.filtersInOverlay,
-        filterTypes: _this.filterTypes
+      }).then(function() {
+        // Update selected highlight size in Edit
+        Fliplet.Widget.updateHighlightDimensions(_this.data.id);
+        
+        _this.Utils.Page.updateActiveFilters({
+          $container: _this.$container,
+          filterOverlayClass: '.simple-list-search-filter-overlay',
+          filtersInOverlay: _this.data.filtersInOverlay,
+          filterTypes: _this.filterTypes
+        });
       });
 
       return Fliplet.Hooks.run('flListDataAfterRenderList', {
@@ -3042,8 +3084,17 @@ DynamicList.prototype.setupLikeButton = function(options) {
   return _this.getLikeIdentifier(record)
     .then(function(identifier) {
       return new Promise(function(resolve) {
+        var targetSelector = options.target || '.simple-list-like-holder-' + id;
+        
+        // Check if target exists before creating button
+        if (!_this.$container.find(targetSelector).length) {
+          console.warn('Like button target not found:', targetSelector);
+          resolve(null);
+          return;
+        }
+        
         var btn = LikeButton({
-          target: '.simple-list-like-holder-' + id,
+          target: targetSelector,
           dataSourceId: _this.data.likesDataSourceId,
           content: identifier,
           name: Fliplet.Env.get('pageTitle') + '/' + title,
@@ -3224,8 +3275,17 @@ DynamicList.prototype.setupBookmarkButton = function(options) {
   return _this.getBookmarkIdentifier(record)
     .then(function(identifier) {
       return new Promise(function(resolve) {
+        var targetSelector = options.target || '.simple-list-bookmark-holder-' + id;
+        
+        // Check if target exists before creating button
+        if (!_this.$container.find(targetSelector).length) {
+          console.warn('Bookmark button target not found:', targetSelector);
+          resolve(null);
+          return;
+        }
+        
         var btn = LikeButton({
-          target: '.simple-list-bookmark-holder-' + id,
+          target: targetSelector,
           dataSourceId: _this.data.bookmarkDataSourceId,
           view: 'userBookmarks',
           content: identifier,
