@@ -1760,9 +1760,9 @@ DynamicList.prototype.addSummaryData = function(records) {
       flFilters: entry.data['flFilters'],
       editEntry: entry.editEntry,
       deleteEntry: entry.deleteEntry,
-      likesEnabled: entry.likesEnabled,
-      bookmarksEnabled: entry.bookmarksEnabled,
-      commentsEnabled: entry.commentsEnabled,
+      likesEnabled: !!_this.data.social.likes,
+      bookmarksEnabled: !!_this.data.social.bookmark,
+      commentsEnabled: !!_this.data.social.comments,
       originalData: entry.data
     };
 
