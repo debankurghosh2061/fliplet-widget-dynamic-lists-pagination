@@ -1518,11 +1518,24 @@ DynamicList.prototype.waitForDOMElements = function(records) {
           console.log('[DynamicList] DOM check for record', record.id, ':', {
             listItemExists: listItemExists,
             likeHolderExists: likeHolderExists,
-            bookmarkHolderExists: bookmarkHolderExists
+            bookmarkHolderExists: bookmarkHolderExists,
+            socialSettings: {
+              likesEnabled: !!_this.data.social.likes,
+              bookmarksEnabled: !!_this.data.social.bookmark
+            }
           });
         }
         
-        return listItemExists && (likeHolderExists || bookmarkHolderExists);
+        // Element should exist if the corresponding social feature is enabled
+        var requiredElementsExist = listItemExists;
+        if (_this.data.social.likes) {
+          requiredElementsExist = requiredElementsExist && likeHolderExists;
+        }
+        if (_this.data.social.bookmark) {
+          requiredElementsExist = requiredElementsExist && bookmarkHolderExists;
+        }
+        
+        return requiredElementsExist;
       });
       
       if (allElementsExist || attempts >= maxAttempts) {
@@ -3011,22 +3024,22 @@ DynamicList.prototype.searchData = function(options) {
           filtersInOverlay: _this.data.filtersInOverlay,
           filterTypes: _this.filterTypes
         });
-      });
-
-      return Fliplet.Hooks.run('flListDataAfterRenderList', {
-        instance: _this,
-        value: value,
-        records: _this.searchedListItems,
-        renderedRecords: renderedRecords,
-        config: _this.data,
-        sortField: _this.sortField,
-        sortOrder: _this.sortOrder,
-        activeFilters: _this.activeFilters,
-        showBookmarks: _this.showBookmarks,
-        id: _this.data.id,
-        uuid: _this.data.uuid,
-        container: _this.$container,
-        initialRender: !!options.initialRender
+        
+        return Fliplet.Hooks.run('flListDataAfterRenderList', {
+          instance: _this,
+          value: value,
+          records: _this.searchedListItems,
+          renderedRecords: renderedRecords,
+          config: _this.data,
+          sortField: _this.sortField,
+          sortOrder: _this.sortOrder,
+          activeFilters: _this.activeFilters,
+          showBookmarks: _this.showBookmarks,
+          id: _this.data.id,
+          uuid: _this.data.uuid,
+          container: _this.$container,
+          initialRender: !!options.initialRender
+        });
       });
     });
   });
@@ -3516,13 +3529,13 @@ DynamicList.prototype.initializeSocials = function(records) {
 
       return [
         _this.setupLikeButton({
-          target: '.simple-list-container .simple-list-like-holder-' + record.id,
+          target: '.simple-list-like-holder-' + record.id,
           id: record.id,
           title: title,
           record: masterRecord
         }),
         _this.setupBookmarkButton({
-          target: '.simple-list-container .simple-list-bookmark-holder-' + record.id,
+          target: '.simple-list-bookmark-holder-' + record.id,
           id: record.id,
           title: title,
           record: masterRecord
